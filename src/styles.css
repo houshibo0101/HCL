@@ -632,3 +632,21 @@ html.theme-morphing, html.theme-morphing *, html.theme-morphing *::before, html.
 .install-side-tip svg { color: var(--muted); flex-shrink: 0; }
 .install-dismiss-hint { margin-top: 4px; }
 @media (max-width: 1080px) { .install-layout { grid-template-columns: 1fr; } }
+
+/* ===== v1.7.9：五个加载器 + Iris 光影开关 ===== */
+.loader-options.five { grid-template-columns: repeat(3, 1fr); }
+.loader-options.five > button { flex-direction: column; align-items: flex-start; gap: 7px; }
+.loader-options.five > button > div { flex-direction: row; align-items: center; gap: 6px; }
+.loader-options.five small { margin-left: auto; }
+@media (max-width: 1080px) { .loader-options.five { grid-template-columns: repeat(2, 1fr); } }
+.quilt-note { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 9px; }
+.quilt-note svg { color: var(--green); flex-shrink: 0; }
+.shader-toggle-row { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding: 12px; border: 1px solid var(--border-strong); border-radius: 10px; background: rgba(255,255,255,.015); }
+.shader-toggle-row > div { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.shader-toggle-row strong { color: var(--text); font-size: 10px; }
+.shader-toggle-row span { color: var(--muted); font-size: 8.5px; line-height: 1.5; }
+.shader-toggle-row .shader-toggle-icon { color: var(--green); flex-shrink: 0; opacity: .55; }
+.shader-switch { width: 34px; height: 19px; border-radius: 99px; border: 1px solid var(--border-strong); background: #131a15; position: relative; flex-shrink: 0; transition: background .18s, border-color .18s; }
+.shader-switch i { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: var(--muted); transition: transform .18s cubic-bezier(.22,.61,.36,1), background .18s; }
+.shader-switch.on { background: var(--green); border-color: var(--green); }
+.shader-switch.on i { transform: translateX(15px); background: #fff; }

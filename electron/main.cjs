@@ -448,6 +448,36 @@ async function getForgeBuilds(mcVersion) {
   }
 }
 
+async function getNeoForgeBuilds(mcVersion) {
+  // NeoForge 版本列表（BMCLAPI 提供 installerPath 完整 maven 路径；官方 maven 国内常直连不通）
+  const prefix = `${mcVersion}-`;
+  const data = await fetchJson(`https://bmclapi2.bangbang93.com/neoforge/list/${encodeURIComponent(mcVersion)}`);
+  if (!Array.isArray(data) || !data.length) throw new Error(`NeoForge 暂不支持 Minecraft ${mcVersion}`);
+  const builds = data
+    .filter((item) => item.installerPath && (String(item.version).startsWith(prefix) || /^neoforge-\d/.test(String(item.rawVersion || ''))))
+    .map((item) => ({ id: String(item.version), build: String(item.version).replace(prefix, ''), installerPath: item.installerPath }))
+    .sort((a, b) => compareBuildDesc(a.build, b.build));
+  if (!builds.length) throw new Error(`NeoForge 暂不支持 Minecraft ${mcVersion}`);
+  // 列表升序时最后一项即最新；无官方 recommended 数据
+  return { builds, recommended: null, latest: builds[0]?.build || null };
+}
+
+function neoforgeInstallerPath(forgeId) {
+  // NeoForge 两种版本格式对应不同 maven 坐标：
+  //   1.20.1-47.1.105（旧格式，mc 前缀）→ /maven/net/neoforged/forge/1.20.1-47.1.105/forge-1.20.1-47.1.105-installer.jar
+  //   21.1.57（新格式，无前缀）→ /maven/net/neoforged/neoforge/21.1.57/neoforge-21.1.57-installer.jar
+  const id = String(forgeId);
+  if (/^\d+\.\d+\.\d+-/.test(id)) return `/maven/net/neoforged/forge/${id}/forge-${id}-installer.jar`;
+  return `/maven/net/neoforged/neoforge/${id}/neoforge-${id}-installer.jar`;
+}
+
+async function getQuiltLoaders(mcVersion) {
+  // Quilt 加载器版本列表（官方 meta API；profile json 与 Fabric 同构）
+  const loaders = await fetchJson(`https://meta.quiltmc.org/v3/versions/loader/${encodeURIComponent(mcVersion)}`);
+  if (!Array.isArray(loaders) || !loaders.length) throw new Error(`Quilt 暂不支持 Minecraft ${mcVersion}`);
+  return { loaders: loaders.map((item) => item.loader.version) };
+}
+
 async function detectProxyJvmArgs() {
   // Forge 官方安装器不支持镜像参数，内部下载走官方源。
   // 如果用户开着系统代理，把代理注入安装器 JVM，让内部下载也能加速。
@@ -521,9 +551,10 @@ async function pollCpolarAddress() {
   }
 }
 
-async function installVersion(version, name, loader = 'Vanilla', forgeId = null) {
-  const taskId = createTask('game', `安装 Minecraft ${version.id}${loader !== 'Vanilla' ? ` · ${loader}` : ''}`);
+async function installVersion(version, name, loader = 'Vanilla', forgeId = null, shaderLoader = null) {
+  const taskId = createTask('game', `安装 Minecraft ${version.id}${loader !== 'Vanilla' ? ` · ${loader}` : ''}${shaderLoader === 'Iris' ? ' · Iris 光影' : ''}`);
   let attemptDir = null;
+  let finishDetail = null;
   try {
     const manifest = await getVersionManifest(false);
     const entry = manifest.versions.find((item) => item.id === version.id);
@@ -532,27 +563,58 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
     let meta = null;
     let vanillaMeta = null;
     let runtimeVersion;
-    if (loader === 'Fabric') {
-      updateTask(taskId, { detail: '获取 Fabric 加载器…', progress: 1 });
-      const fabricBase = `https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(version.id)}`;
-      const fabricBaseMirror = `https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/${encodeURIComponent(version.id)}`;
+    if (loader === 'Fabric' || loader === 'Quilt') {
+      // Quilt profile json 与 Fabric 完全同构，复用同一条安装路径
+      const isQuilt = loader === 'Quilt';
+      updateTask(taskId, { detail: `获取 ${loader} 加载器…`, progress: 1 });
+      const metaBase = isQuilt
+        ? `https://meta.quiltmc.org/v3/versions/loader/${encodeURIComponent(version.id)}`
+        : `https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(version.id)}`;
+      const mirrorBase = isQuilt
+        ? `https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/${encodeURIComponent(version.id)}`
+        : `https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/${encodeURIComponent(version.id)}`;
       let loaders;
-      try {
-        loaders = await fetchJson(fabricBase);
-      } catch (error) {
-        if (error.name === 'AbortError') throw error;
-        loaders = await fetchJson(fabricBaseMirror);
-      }
-      if (!loaders.length) throw new Error(`Fabric 暂不支持 Minecraft ${version.id}`);
-      const selectedLoader = loaders.find((item) => item.loader.stable) || loaders[0];
-      const profileUrl = `${fabricBase}/${encodeURIComponent(selectedLoader.loader.version)}/profile/json`;
-      try {
-        meta = await resolveVersion(profileUrl);
-      } catch (error) {
-        if (error.name === 'AbortError') throw error;
-        meta = await resolveVersion(profileUrl.replace('https://meta.fabricmc.net', 'https://bmclapi2.bangbang93.com/fabric-meta'));
+      let selectedLoaderVersion;
+      if (isQuilt) {
+        // Quilt：v3 API 返回 loader 数组，选择最新稳定版
+        const quiltData = await fetchJson(metaBase).catch(async (error) => {
+          if (error.name === 'AbortError') throw error;
+          const fallback = await fetchJson(mirrorBase).catch(() => null);
+          if (fallback) return fallback.map((item) => ({ loader: { version: item.loader?.version || item.version } }));
+          throw error;
+        });
+        if (!quiltData.length) throw new Error(`Quilt 暂不支持 Minecraft ${version.id}`);
+        selectedLoaderVersion = quiltData[0].loader.version;
+        const quiltProfileUrl = `${metaBase}/${encodeURIComponent(selectedLoaderVersion)}/profile/json`;
+        try {
+          meta = await resolveVersion(quiltProfileUrl);
+        } catch (error) {
+          if (error.name === 'AbortError') throw error;
+          throw error;
+        }
+      } else {
+        try {
+          loaders = await fetchJson(metaBase);
+        } catch (error) {
+          if (error.name === 'AbortError') throw error;
+          loaders = await fetchJson(mirrorBase);
+        }
+        if (!loaders.length) throw new Error(`Fabric 暂不支持 Minecraft ${version.id}`);
+        const selectedLoader = loaders.find((item) => item.loader.stable) || loaders[0];
+        const profileUrl = `${metaBase}/${encodeURIComponent(selectedLoader.loader.version)}/profile/json`;
+        try {
+          meta = await resolveVersion(profileUrl);
+        } catch (error) {
+          if (error.name === 'AbortError') throw error;
+          meta = await resolveVersion(profileUrl.replace('https://meta.fabricmc.net', 'https://bmclapi2.bangbang93.com/fabric-meta'));
+        }
       }
       runtimeVersion = meta.id || version.id;
+    } else if (loader === 'NeoForge') {
+      if (!forgeId) throw new Error('请选择要安装的 NeoForge 版本');
+      updateTask(taskId, { detail: '读取原版版本信息…', progress: 1 });
+      vanillaMeta = await resolveVersion(entry.url);
+      runtimeVersion = String(forgeId);
     } else if (loader === 'Forge') {
       if (!forgeId) throw new Error('请选择要安装的 Forge 版本');
       updateTask(taskId, { detail: '读取原版版本信息…', progress: 1 });
@@ -568,10 +630,11 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
     const versionDir = path.join(gameDir, 'versions', runtimeVersion);
     await fsp.mkdir(versionDir, { recursive: true });
     updateTask(taskId, { detail: '读取版本信息…', progress: 1 });
-    if (loader !== 'Forge') {
+    const isInstallerLoader = loader === 'Forge' || loader === 'NeoForge';
+    if (!isInstallerLoader) {
       await fsp.writeFile(path.join(versionDir, `${runtimeVersion}.json`), JSON.stringify(meta, null, 2));
     }
-    const assetMeta = loader === 'Forge' ? vanillaMeta : meta;
+    const assetMeta = isInstallerLoader ? vanillaMeta : meta;
     const assetIndexUrl = assetMeta?.assetIndex?.url;
     if (!assetIndexUrl) throw new Error('此版本缺少资源索引');
     const assetIndexPath = path.join(gameDir, 'assets', 'indexes', `${assetMeta.assetIndex.id}.json`);
@@ -587,13 +650,19 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
       return true;
     };
     const nativeLibraries = [];
-    if (loader === 'Forge') {
-      updateTask(taskId, { detail: '下载 Forge 官方安装器…', progress: 2 });
-      const installerPath = path.join(CACHE_DIR, 'forge', `forge-${forgeId}-installer.jar`);
-      const installerUrls = [
-        `https://maven.minecraftforge.net/net/minecraftforge/forge/${forgeId}/forge-${forgeId}-installer.jar`,
-        `https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/${forgeId}/forge-${forgeId}-installer.jar`,
-      ];
+    if (loader === 'Forge' || loader === 'NeoForge') {
+      const isNeo = loader === 'NeoForge';
+      updateTask(taskId, { detail: `下载 ${loader} 官方安装器…`, progress: 2 });
+      const installerPath = path.join(CACHE_DIR, 'forge', `${loader.toLowerCase()}-${forgeId}-installer.jar`);
+      const installerUrls = isNeo
+        ? [
+          `https://bmclapi2.bangbang93.com${neoforgeInstallerPath(forgeId)}`,
+          `https://maven.neoforged.net/net/neoforged/neoforge/${forgeId}/neoforge-${forgeId}-installer.jar`,
+        ]
+        : [
+          `https://maven.minecraftforge.net/net/minecraftforge/forge/${forgeId}/forge-${forgeId}-installer.jar`,
+          `https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/${forgeId}/forge-${forgeId}-installer.jar`,
+        ];
       let installerError = null;
       for (const url of installerUrls) {
         try {
@@ -601,7 +670,7 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
             signal: controllers.get(taskId)?.signal,
             onProgress: (received, total) => updateTask(taskId, {
               progress: total ? Math.min(9, 2 + (received / total) * 7) : 3,
-              detail: `下载 Forge 安装器 ${(received / 1048576).toFixed(1)} MB`,
+              detail: `下载 ${loader} 安装器 ${(received / 1048576).toFixed(1)} MB`,
             }),
           });
           installerError = null;
@@ -622,13 +691,13 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
         java = (await listJavas()).filter((item) => item.major >= need).sort((a, b) => a.major - b.major)[0];
       }
       if (!java) {
-        const error = new Error(`安装 Forge 需要先安装 Java ${need}，请到“设置 → Java 环境”配置或开启自动下载`);
+        const error = new Error(`安装 ${loader} 需要先安装 Java ${need}，请到“设置 → Java 环境”配置或开启自动下载`);
         error.code = 'NO_JAVA';
         throw error;
       }
-      updateTask(taskId, { detail: '正在运行 Forge 官方安装器（下载运行库并打补丁，需要几分钟）…', progress: 10 });
+      updateTask(taskId, { detail: `正在运行 ${loader} 官方安装器（下载运行库并打补丁，需要几分钟）…`, progress: 10 });
       const proxyArgs = await detectProxyJvmArgs();
-      if (proxyArgs.length) updateTask(taskId, { detail: '正在运行 Forge 官方安装器（已复用系统代理加速下载）…', progress: 10 });
+      if (proxyArgs.length) updateTask(taskId, { detail: `正在运行 ${loader} 官方安装器（已复用系统代理加速下载）…`, progress: 10 });
       await new Promise((resolve, reject) => {
         execFile(java.path, [...proxyArgs, '-jar', installerPath, '--installClient', gameDir], {
           timeout: 15 * 60 * 1000,
@@ -636,13 +705,13 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
           windowsHide: true,
         }, (error, stdout, stderr) => {
           if (error) {
-            reject(new Error(`Forge 安装器运行失败：${String(stderr || stdout || error.message).trim().slice(-400)}`));
+            reject(new Error(`${loader} 安装器运行失败：${String(stderr || stdout || error.message).trim().slice(-400)}`));
             return;
           }
           resolve();
         });
       });
-      updateTask(taskId, { detail: '定位 Forge 版本文件…', progress: 20 });
+      updateTask(taskId, { detail: `定位 ${loader} 版本文件…`, progress: 20 });
       const versionsRoot = path.join(gameDir, 'versions');
       const versionDirs = await fsp.readdir(versionsRoot, { withFileTypes: true });
       let found = null;
@@ -651,13 +720,15 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
         const jsonPath = path.join(versionsRoot, dir.name, `${dir.name}.json`);
         try {
           const parsed = JSON.parse(await fsp.readFile(jsonPath, 'utf8'));
-          if (parsed.inheritsFrom === version.id && String(parsed.id || '').includes('forge')) {
+          // NeoForge 版本 id 有两种格式：1.20.1-forge-47.1.105 / neoforge-21.1.57（无前缀）
+          const isLoaderId = String(parsed.id || '').includes('forge');
+          if (parsed.inheritsFrom === version.id && isLoaderId) {
             const stat = await fsp.stat(jsonPath);
             if (!found || stat.mtimeMs > found.mtime) found = { id: parsed.id, dir: dir.name, mtime: stat.mtimeMs };
           }
         } catch {}
       }
-      if (!found) throw new Error('Forge 安装器未生成版本文件，请查看失败日志后重试');
+      if (!found) throw new Error(`${loader} 安装器未生成版本文件，请查看失败日志后重试`);
       runtimeVersion = found.id;
       versionDir = path.join(versionsRoot, found.dir);
     } else {
@@ -689,6 +760,12 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
     await fsp.mkdir(path.join(gameDir, 'mods'), { recursive: true });
     await fsp.mkdir(path.join(gameDir, 'shaderpacks'), { recursive: true });
     await fsp.mkdir(path.join(gameDir, 'saves'), { recursive: true });
+    // 光影加载器（Iris）：游戏主体装完后自动下载 Iris + Sodium + FFAPI 到 mods
+    if (shaderLoader === 'Iris') {
+      updateTask(taskId, { detail: '下载光影加载器组件（Iris / Sodium / FFAPI）…', progress: 96 });
+      const count = await downloadShaderLoaderPack(gameDir, version.id, loader, taskId);
+      finishDetail = `安装完成 · ${downloads.length + count} 个文件（含 Iris 光影组件）`;
+    }
     const instance = {
       id, name: instanceName, version: version.id, runtimeVersion, type: version.type, loader,
       gameDir, versionDir, createdAt: Date.now(), lastPlayed: null,
@@ -699,7 +776,7 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
       fsp.writeFile(INSTANCES_FILE, JSON.stringify(instances, null, 2)),
       fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2)),
     ]);
-    finishTask(taskId, 'completed', `安装完成 · ${downloads.length} 个文件`);
+    finishTask(taskId, 'completed', finishDetail || `安装完成 · ${downloads.length} 个文件`);
     send('instances:update', { instances, selectedInstanceId: id });
     return { instance, taskId };
   } catch (error) {
@@ -708,7 +785,7 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
       title: `安装 Minecraft ${version.id}${loader !== 'Vanilla' ? ` · ${loader}` : ''}`,
       item: failedItem,
       error,
-      extra: { 游戏版本: version.id, 加载器: loader, ...(loader === 'Forge' && forgeId ? { 'Forge 版本': forgeId } : {}) },
+      extra: { 游戏版本: version.id, 加载器: loader, ...((loader === 'Forge' || loader === 'NeoForge') && forgeId ? { [`${loader} 版本`]: forgeId } : {}) },
     });
     finishTask(taskId, error.name === 'AbortError' ? 'cancelled' : 'error', error.message);
     if (attemptDir) {
@@ -1146,6 +1223,68 @@ async function downloadResource(resource) {
   }
 }
 
+async function fetchLatestModrinthFile(projectSlug, gameVersion, loaders) {
+  // 取 Modrinth 项目在指定版本+加载器下最新的 release 文件
+  const params = new URLSearchParams();
+  params.set('game_versions', JSON.stringify([gameVersion]));
+  if (loaders?.length) params.set('loaders', JSON.stringify(loaders));
+  const versions = await fetchJson(`https://api.modrinth.com/v2/project/${encodeURIComponent(projectSlug)}/version?${params}`);
+  if (!Array.isArray(versions) || !versions.length) return null;
+  const release = versions.find((v) => v.version_type === 'release') || versions[0];
+  const file = (release.files || []).find((f) => f.primary) || (release.files || [])[0];
+  return file ? { url: file.url, filename: file.filename, size: file.size || 0, version: release.version_number } : null;
+}
+
+async function downloadShaderLoaderPack(gameDir, mcVersion, modLoader, parentTaskId) {
+  // Iris 光影加载器组件包：Iris 本体 + Sodium（性能） + FFAPI（Fabric API 依赖）
+  // Quilt 亦使用 fabric 标签的构建；Iris 自 1.20 起不再要求独立 FFAPI 版本，但保留以兼容旧版
+  const loaderTag = modLoader === 'Fabric' || modLoader === 'Quilt' ? ['fabric'] : [];
+  const components = [
+    { slug: 'iris', label: 'Iris 光影加载器', fallback: 'https://api.modrinth.com/v2/project/iris/version' },
+    { slug: 'sodium', label: 'Sodium 性能优化', fallback: 'https://api.modrinth.com/v2/project/sodium/version' },
+    { slug: 'fabric-api', label: 'Fabric API', fallback: 'https://api.modrinth.com/v2/project/fabric-api/version' },
+  ];
+  let downloaded = 0;
+  const failures = [];
+  for (let i = 0; i < components.length; i += 1) {
+    const item = components[i];
+    updateTask(parentTaskId, { detail: `下载光影组件 ${i + 1}/${components.length}：${item.label}…`, progress: 96 + i });
+    try {
+      let file = null;
+      try {
+        file = await fetchLatestModrinthFile(item.slug, mcVersion, loaderTag);
+      } catch {
+        file = null;
+      }
+      if (!file && loaderTag.length) {
+        // 严格过滤无结果时放宽：不限定加载器（Iris 对 quilt 也发布 fabric 构建）
+        try { file = await fetchLatestModrinthFile(item.slug, mcVersion, null); } catch { file = null; }
+      }
+      if (!file) {
+        failures.push(`${item.label}：未找到 Minecraft ${mcVersion} 的可用版本`);
+        continue;
+      }
+      const destination = path.join(gameDir, 'mods', path.basename(file.filename).replace(/[<>:"|?*]/g, '-'));
+      await downloadFile(file.url, destination, {
+        signal: controllers.get(parentTaskId)?.signal,
+        expectedSize: file.size,
+      });
+      downloaded += 1;
+    } catch (error) {
+      if (error.name === 'AbortError') throw error;
+      failures.push(`${item.label}：${error.message}`);
+    }
+  }
+  if (failures.length) {
+    await appendErrorLog({
+      title: `光影加载器组件下载（Minecraft ${mcVersion}）`,
+      error: new Error(failures.join('；')),
+      extra: { 游戏版本: mcVersion, 加载器: modLoader },
+    });
+  }
+  return downloaded;
+}
+
 function registerIpc() {
   ipcMain.handle('app:get-state', () => ({ settings, instances, tasks: [...tasks.values()], dataRoot: DATA_ROOT, appVersion: app.getVersion(), platform: process.platform, running: [...gameProcesses.keys()] }));
   ipcMain.handle('settings:save', async (_event, next) => {
@@ -1158,8 +1297,10 @@ function registerIpc() {
     return settings;
   });
   ipcMain.handle('versions:list', (_event, refresh) => getVersionManifest(refresh));
-  ipcMain.handle('versions:install', (_event, version, name, loader, forgeId) => installVersion(version, name, loader, forgeId));
+  ipcMain.handle('versions:install', (_event, version, name, loader, forgeId, shaderLoader) => installVersion(version, name, loader, forgeId, shaderLoader));
   ipcMain.handle('forge:list', (_event, mcVersion) => getForgeBuilds(mcVersion));
+  ipcMain.handle('neoforge:list', (_event, mcVersion) => getNeoForgeBuilds(mcVersion));
+  ipcMain.handle('quilt:list', (_event, mcVersion) => getQuiltLoaders(mcVersion));
   ipcMain.handle('accounts:list', () => ({
     accounts: accounts.map(({ accessToken, ...rest }) => ({ ...rest, hasToken: Boolean(accessToken) })),
     currentId: settings.currentAccountId,
