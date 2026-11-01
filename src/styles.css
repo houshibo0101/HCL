@@ -650,3 +650,18 @@ html.theme-morphing, html.theme-morphing *, html.theme-morphing *::before, html.
 .shader-switch i { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: var(--muted); transition: transform .18s cubic-bezier(.22,.61,.36,1), background .18s; }
 .shader-switch.on { background: var(--green); border-color: var(--green); }
 .shader-switch.on i { transform: translateX(15px); background: #fff; }
+
+/* ===== v1.7.10：Mod/光影详情独立页 ===== */
+.project-page .text-button.back { margin-bottom: 14px; font-size: 12px; }
+.project-page .text-button.back svg { transform: scaleX(-1); }
+.project-page-icon { width: 60px; height: 60px; border-radius: 12px; overflow: hidden; display: grid; place-items: center; background: var(--accent-dim-b); color: var(--green); flex-shrink: 0; box-shadow: inset 0 1px rgba(255,255,255,.05); }
+.project-page-icon img { width: 100%; height: 100%; object-fit: cover; }
+.project-hero-info { flex: 1; min-width: 0; }
+.project-hero-info h2 { font-size: 17px; color: var(--text); }
+.project-hero-info p { color: var(--muted); font-size: 10px; margin-top: 5px; }
+.project-hero-info .resource-tags { margin-top: 8px; }
+.project-page-link { border: 1px solid var(--border); border-radius: 8px; flex-shrink: 0; }
+.project-page-desc { color: #a2afa5; font-size: 10.5px; line-height: 1.7; margin: 14px 0 18px; max-width: 760px; }
+.project-page-section { border: 1px solid var(--border); border-radius: 12px; background: var(--panel-1); padding: 18px; animation: rise-in .3s .04s cubic-bezier(.22,.61,.36,1) both; }
+.project-page-section .release-list { max-height: 320px; }
+.project-page .install-hero { animation: rise-in .3s cubic-bezier(.22,.61,.36,1) both; }
