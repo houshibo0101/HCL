@@ -1379,18 +1379,59 @@ async function findMirrorUpdate() {
   return null;
 }
 
-async function checkForUpdatesWithFallback() {
+// 自动区分国内外：探测 GitHub 可达性与延迟，决定更新源顺序（5 分钟缓存）
+let updateRegion = null;
+let updateRegionCheckedAt = 0;
+let feedMode = 'official'; // 'official' | 'mirror'
+
+async function detectUpdateRegion() {
+  if (updateRegion && Date.now() - updateRegionCheckedAt < 5 * 60 * 1000) return updateRegion;
+  const started = Date.now();
   try {
-    const result = await autoUpdater.checkForUpdates();
-    return { status: result?.isUpdateAvailable ? 'available' : 'none', version: result?.updateInfo?.version || app.getVersion() };
-  } catch (error) {
-    // 官方源不通 → 镜像链兜底：镜像代理的 latest/download 恒指向最新版
-    const mirror = await findMirrorUpdate();
-    if (!mirror) throw error;
-    autoUpdater.setFeedURL({ provider: 'generic', url: `${mirror.prefix}https://github.com/${GH_REPO}/releases/latest/download/` });
-    const result = await autoUpdater.checkForUpdates();
-    return { status: result?.isUpdateAvailable ? 'available' : 'none', version: result?.updateInfo?.version || app.getVersion(), via: 'mirror' };
+    const res = await fetch('https://api.github.com/zen', { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(2500) });
+    updateRegion = res.ok && Date.now() - started < 2500 ? 'overseas' : 'china';
+  } catch {
+    updateRegion = 'china';
   }
+  updateRegionCheckedAt = Date.now();
+  return updateRegion;
+}
+
+async function checkOfficialFeed() {
+  if (feedMode !== 'official') {
+    autoUpdater.setFeedURL({ provider: 'github', owner: 'houshibo0101', repo: 'HCL' });
+    feedMode = 'official';
+  }
+  const result = await autoUpdater.checkForUpdates();
+  updateRetryAttempts = 0;
+  scheduleNextUpdateCheck(UPDATE_CHECK_INTERVAL);
+  return { status: result?.isUpdateAvailable ? 'available' : 'none', version: result?.updateInfo?.version || app.getVersion(), via: 'official' };
+}
+
+async function checkMirrorFeed() {
+  const mirror = await findMirrorUpdate();
+  if (!mirror) throw new Error('所有更新镜像均不可用');
+  autoUpdater.setFeedURL({ provider: 'generic', url: `${mirror.prefix}https://github.com/${GH_REPO}/releases/latest/download/` });
+  feedMode = 'mirror';
+  const result = await autoUpdater.checkForUpdates();
+  updateRetryAttempts = 0;
+  scheduleNextUpdateCheck(UPDATE_CHECK_INTERVAL);
+  return { status: result?.isUpdateAvailable ? 'available' : 'none', version: result?.updateInfo?.version || app.getVersion(), via: 'mirror' };
+}
+
+async function checkForUpdatesWithFallback() {
+  // 在国外（GitHub 直连快）优先官方源；在国内优先镜像；首选失败自动切到另一种
+  const region = await detectUpdateRegion();
+  const order = region === 'china' ? ['mirror', 'official'] : ['official', 'mirror'];
+  let lastError = null;
+  for (const mode of order) {
+    try {
+      return mode === 'official' ? await checkOfficialFeed() : await checkMirrorFeed();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('更新检查失败');
 }
 
 function scheduleNextUpdateCheck(delay) {

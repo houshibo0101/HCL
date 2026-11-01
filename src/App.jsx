@@ -558,6 +558,7 @@ export default function App() {
     setChecking(true);
     try {
       const result = await window.hcl.checkForUpdates();
+      if (result?.via) setUpdateInfo((old) => ({ ...old, via: result.via }));
       if (!openPanel) {
         if (result?.status === 'none') toast('当前已是最新版本');
         else if (result?.status === 'dev') toast('开发模式下暂不支持应用内更新', 'info');
@@ -618,7 +619,7 @@ export default function App() {
         {(checking || updateStatus === 'available' || updateStatus === 'downloading' || updateStatus === 'ready') && <ol className="update-steps">
           <li className={checking && !updateStatus ? 'running' : 'done'}>
             <span className="step-icon">{checking && !updateStatus ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={16} />}</span>
-            <div className="step-body"><strong>检查更新</strong><span className="step-desc">直连 GitHub，失败自动切换国内镜像</span></div>
+            <div className="step-body"><strong>检查更新</strong><span className="step-desc">{updateInfo?.via === 'mirror' ? '已自动切换国内镜像加速' : '直连 GitHub（国内自动切换镜像）'}</span></div>
             <span className="step-state">{checking && !updateStatus ? '正在连接…' : '完成'}</span>
           </li>
           <li className={updateStatus === 'ready' ? 'done' : (updateStatus === 'available' || updateStatus === 'downloading') ? 'running' : ''}>
