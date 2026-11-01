@@ -8,6 +8,18 @@ import {
 } from 'lucide-react';
 import { translateQuery, lookupProject } from './modDictionary';
 
+let vtRunning = false;
+const runViewTransition = (update) => {
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  if (typeof document.startViewTransition !== 'function' || reduce || vtRunning) { update(); return; }
+  vtRunning = true;
+  const vt = document.startViewTransition(update);
+  const done = () => { vtRunning = false; };
+  if (vt.finished?.then) vt.finished.then(done, done);
+  // 兜底：任何情况下不让过渡层卡住页面（::view-transition 会拦截整窗点击）
+  setTimeout(() => { try { vt.skipTransition(); } catch {} }, 450);
+};
+
 const THEMES = [
   { id: 'green', name: '翡翠绿', c1: '#83df90', c2: '#50b967' },
   { id: 'blue', name: '穹际蓝', c1: '#8ccbf7', c2: '#3d82d6' },
@@ -475,26 +487,24 @@ export default function App() {
     });
     return () => { offTask(); offInstances(); offLog(); offUpdate(); offAccounts(); };
   }, [toast, refreshAccounts]);
+  const prevThemeRef = useRef(null);
   useEffect(() => {
     const next = state.settings.theme || 'green';
-    if (!document.documentElement.dataset.theme) { document.documentElement.dataset.theme = next; return; }
-    if (document.documentElement.dataset.theme === next) return;
-    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    if (typeof document.startViewTransition === 'function' && !reduce) {
-      // 主题切换：整窗色彩交叉淡入，丝滑换装
-      document.startViewTransition(() => flushSync(() => { document.documentElement.dataset.theme = next; }));
-    } else document.documentElement.dataset.theme = next;
+    const prev = prevThemeRef.current;
+    prevThemeRef.current = next;
+    if (prev === null || prev === next) {
+      // 首次应用/未变化：直接设置，绝不播过渡（启动时窗口可能未显示，过渡会卡住整个界面）
+      document.documentElement.dataset.theme = next;
+      return;
+    }
+    runViewTransition(() => { document.documentElement.dataset.theme = next; });
   }, [state.settings.theme]);
   const selected = state.instances.find((item) => item.id === state.settings.selectedInstanceId) || state.instances[0];
   const currentAccount = accounts.find((item) => item.id === currentAccountId) || accounts[0] || null;
   const activeDownloads = state.tasks.filter((task) => task.status === 'downloading').length;
   const navigate = (next) => {
     if (next === page) return;
-    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    if (typeof document.startViewTransition === 'function' && !reduce) {
-      // 页面切换：旧页淡出上移、新页淡入升起
-      document.startViewTransition(() => flushSync(() => setPage(next)));
-    } else setPage(next);
+    runViewTransition(() => flushSync(() => setPage(next)));
   };
   const selectInstance = async (id) => {
     await window.hcl.selectInstance(id);

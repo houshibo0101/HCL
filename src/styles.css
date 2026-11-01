@@ -140,8 +140,9 @@ input::placeholder { color: #68766c; }
 .page-header p { margin: 0; color: var(--muted); font-size: 11px; }
 .page-scroll { overflow-y: auto; overflow-x: hidden; padding: 0 32px 35px; flex: 1; }
 .page { width: 100%; max-width: 1450px; margin: 0 auto; }
-::view-transition-old(root) { animation: vt-out .16s ease-in both; }
-::view-transition-new(root) { animation: vt-in .2s ease-out .03s both; }
+::view-transition { pointer-events: none; }
+::view-transition-old(root) { animation: vt-out .14s ease-in both; }
+::view-transition-new(root) { animation: vt-in .18s ease-out .02s both; }
 @keyframes vt-out { to { opacity: 0; transform: translateY(-5px); } }
 @keyframes vt-in { from { opacity: 0; transform: translateY(7px); } }
 .current-instance { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); background: #141b16; border-radius: 9px; padding: 8px 11px 8px 8px; min-width: 200px; text-align: left; }
