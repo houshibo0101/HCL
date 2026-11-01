@@ -82,7 +82,7 @@ function EmptyState({ icon: Icon = Box, title, text, action, onAction }) {
   return <div className="empty-state"><div className="empty-icon"><Icon size={28} /></div><h3>{title}</h3><p>{text}</p>{action && <button className="button secondary" onClick={onAction}>{action}</button>}</div>;
 }
 
-function HomePage({ instances, selected, settings, tasks, onLaunch, launching, running, onNavigate, onManage, onSelect, onOpenFolder, java }) {
+function HomePage({ instances, selected, settings, tasks, onLaunch, launching, running, onNavigate, onManage, onSelect, onOpenFolder, java, appVersion, onCheckUpdates }) {
   const activeTasks = tasks.filter((task) => task.status === 'downloading');
   return <div className="page home-page">
     <section className="hero">
@@ -120,7 +120,7 @@ function HomePage({ instances, selected, settings, tasks, onLaunch, launching, r
       </section>
       <aside className="home-aside">
         <section className="side-card profile-card"><div className="side-card-title"><h3>玩家档案</h3><UserRound size={17} /></div><div className="player-row"><div className="player-avatar"><span>{settings.username.slice(0, 1).toUpperCase()}</span><i /></div><div><strong>{settings.username}</strong><span>离线玩家</span></div><span className="local-badge">本地</span></div><div className="profile-stats"><div><strong>{instances.length}</strong><span>游戏实例</span></div><div><strong>{settings.memory / 1024} GB</strong><span>分配内存</span></div></div></section>
-        <section className="side-card status-card"><div className="side-card-title"><h3>运行状态</h3><span className={`status-pill ${java?.found ? '' : 'warning'}`}>{java?.found ? '就绪' : '需配置'}</span></div><div className="status-line"><span><Zap size={15} />Java 环境</span><strong>{java?.found ? `Java ${java.version.split('_')[0]}` : '未检测到'}</strong></div><div className="status-line"><span><Download size={15} />活动下载</span><strong>{activeTasks.length} 个任务</strong></div><div className="status-line"><span><HardDrive size={15} />游戏目录</span><button title="打开游戏目录" onClick={onOpenFolder}>{settings.gameDirectory?.slice(0, 1) || 'D'} 盘 <FolderOpen size={13} /></button></div></section>
+        <section className="side-card status-card"><div className="side-card-title"><h3>运行状态</h3><span className={`status-pill ${java?.found ? '' : 'warning'}`}>{java?.found ? '就绪' : '需配置'}</span></div><div className="status-line"><span><Zap size={15} />Java 环境</span><strong>{java?.found ? `Java ${java.version.split('_')[0]}` : '未检测到'}</strong></div><div className="status-line"><span><Download size={15} />活动下载</span><strong>{activeTasks.length} 个任务</strong></div><div className="status-line"><span><HardDrive size={15} />游戏目录</span><button title="打开游戏目录" onClick={onOpenFolder}>{settings.gameDirectory?.slice(0, 1) || 'D'} 盘 <FolderOpen size={13} /></button></div><div className="status-line"><span><RefreshCw size={15} />启动器版本</span><button title="检查启动器更新" onClick={onCheckUpdates}>v{appVersion || '?'} · 检查更新</button></div></section>
         <div className="tip-card"><Leaf size={18} /><p>小提示：Mod 与光影需要对应的加载器才能生效，下载时注意游戏版本。</p></div>
       </aside>
     </div>
@@ -315,7 +315,7 @@ function InstanceModal({ instances, selectedId, onClose, onSelect, onDelete, onO
 
 export default function App() {
   const [page, setPage] = useState('home');
-  const [state, setState] = useState({ settings: { username: 'Player', memory: 4096 }, instances: [], tasks: [], dataRoot: 'D:\\HCL\\data', appVersion: '1.2.0' });
+  const [state, setState] = useState({ settings: { username: 'Player', memory: 4096 }, instances: [], tasks: [], dataRoot: 'D:\\HCL\\data', appVersion: '1.4.2' });
   const [ready, setReady] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [instanceModal, setInstanceModal] = useState(false);
@@ -337,6 +337,7 @@ export default function App() {
     });
     const offUpdate = window.hcl.listen('app:update', (data) => {
       if (data?.status === 'ready') toast(`HCL v${data.version} 已下载完成，重启后自动安装`, 'info');
+      else if (data?.status === 'available') toast(`发现新版本 v${data.version}，正在后台下载…`, 'info');
     });
     return () => { offTask(); offInstances(); offLog(); offUpdate(); };
   }, [toast]);
@@ -397,9 +398,9 @@ export default function App() {
   if (!ready) return <div className="app-loading"><Logo /><LoaderCircle className="spin" size={22} /><span>正在准备你的世界…</span></div>;
   return <div className="app-shell">
     <header className="titlebar"><div className="titlebar-brand"><Logo compact /></div><div className="window-title"><span>HCL</span><i />{PAGE_META[page][0]}</div><div className="window-controls"><button onClick={() => window.hcl.windowMinimize()}><Minus size={16} /></button><button onClick={() => window.hcl.windowMaximize()}><Square size={13} /></button><button className="window-close" onClick={() => window.hcl.windowClose()}><X size={17} /></button></div></header>
-    <aside className="sidebar"><div className="sidebar-brand"><Logo /></div><nav className="main-nav"><span className="nav-label">启动器</span>{NAV_ITEMS.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => navigate(id)}><Icon size={19} /><span>{label}</span>{id === 'downloads' && activeDownloads > 0 && <b>{activeDownloads}</b>}{page === id && <i />}</button>)}</nav><div className="sidebar-bottom"><button className={`settings-nav ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={19} /><span>设置</span></button><button className="sidebar-player" onClick={() => navigate('settings')}><div className="mini-avatar">{state.settings.username.slice(0, 1).toUpperCase()}<i /></div><div><strong>{state.settings.username}</strong><span>离线模式</span></div><ChevronRight size={15} /></button><div className="sidebar-version">HCL v{state.appVersion || '1.1.0'} <span>•</span> 为热爱而创造</div></div></aside>
+    <aside className="sidebar"><div className="sidebar-brand"><Logo /></div><nav className="main-nav"><span className="nav-label">启动器</span>{NAV_ITEMS.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => navigate(id)}><Icon size={19} /><span>{label}</span>{id === 'downloads' && activeDownloads > 0 && <b>{activeDownloads}</b>}{page === id && <i />}</button>)}</nav><div className="sidebar-bottom"><button className={`settings-nav ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={19} /><span>设置</span></button><button className="sidebar-player" onClick={() => navigate('settings')}><div className="mini-avatar">{state.settings.username.slice(0, 1).toUpperCase()}<i /></div><div><strong>{state.settings.username}</strong><span>离线模式</span></div><ChevronRight size={15} /></button><div className="sidebar-version" title="点击检查启动器更新" onClick={checkUpdates}>HCL v{state.appVersion || '1.4.2'} <span>•</span> 点击检查更新</div></div></aside>
     <main className="main-area"><div className="page-header"><div><h1>{PAGE_META[page][0]}</h1><p>{PAGE_META[page][1]}</p></div>{page === 'home' && <button className="current-instance" onClick={() => setInstanceModal(true)}><div className="current-instance-icon"><Gamepad2 size={18} /></div><div><span>当前实例</span><strong>{selected?.name || '尚未安装游戏'}</strong></div><ChevronDown size={16} /></button>}</div><div className="page-scroll">
-      {page === 'home' && <HomePage instances={state.instances} selected={selected} settings={state.settings} tasks={state.tasks} onLaunch={launch} launching={launching} running={selected && running.includes(selected.id)} onNavigate={navigate} onManage={() => setInstanceModal(true)} onSelect={selectInstance} onOpenFolder={() => window.hcl.openFolder('games')} java={java} />}
+      {page === 'home' && <HomePage instances={state.instances} selected={selected} settings={state.settings} tasks={state.tasks} onLaunch={launch} launching={launching} running={selected && running.includes(selected.id)} onNavigate={navigate} onManage={() => setInstanceModal(true)} onSelect={selectInstance} onOpenFolder={() => window.hcl.openFolder('games')} java={java} appVersion={state.appVersion} onCheckUpdates={checkUpdates} />}
       {page === 'versions' && <VersionsPage installed={state.instances} onInstall={install} installing={installing} settings={state.settings} />}
       {(page === 'mods' || page === 'shaders') && <ResourceBrowser key={page} kind={page === 'mods' ? 'mod' : 'shader'} instances={state.instances} selected={selected} onDownload={downloadResource} onRequireInstance={() => selected ? setInstanceModal(true) : setPage('versions')} />}
       {page === 'downloads' && <DownloadsPage tasks={state.tasks} onCancel={window.hcl.cancelTask} onOpenLog={() => window.hcl.openErrorLog()} onClear={async () => { const tasks = await window.hcl.clearTasks(); setState((old) => ({ ...old, tasks })); }} />}
