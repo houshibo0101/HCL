@@ -629,7 +629,10 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null,
       if (!forgeId) throw new Error('请选择要安装的 Forge 版本');
       updateTask(taskId, { detail: '读取原版版本信息…', progress: 1 });
       vanillaMeta = await resolveVersion(entry.url);
-      runtimeVersion = `${version.id}-forge-${forgeId.slice(version.id.length + 1) || forgeId}`;
+      // 规范化 Forge 版本 id：recommended/latest 默认值是纯版本号（65.1.5），
+      // builds 列表里的 id 带版本前缀（26.2-65.1.5）；installer URL 需要完整 id
+      forgeId = String(forgeId).startsWith(`${version.id}-`) ? String(forgeId) : `${version.id}-${forgeId}`;
+      runtimeVersion = `${version.id}-forge-${forgeId.slice(version.id.length + 1)}`;
     } else {
       meta = await resolveVersion(entry.url);
       runtimeVersion = meta.id || version.id;

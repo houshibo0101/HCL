@@ -161,7 +161,10 @@ function VersionsPage({ installed, onInstall, installing, settings }) {
     window.hcl.listForge(installTarget.id).then((data) => {
       if (!active) return;
       setForgeBuilds(data);
-      setForgeId(data.recommended || data.latest || data.builds[0]?.id || '');
+      // recommended/latest 是纯版本号，优先映射到 builds 里的完整 id（带版本前缀）
+      const preferred = data.recommended || data.latest;
+      const exact = preferred && data.builds.find((b) => b.build === preferred);
+      setForgeId(exact ? exact.id : (preferred || data.builds[0]?.id || ''));
     }).catch((error) => active && setForgeBuilds({ builds: [], error: error.message }));
     return () => { active = false; };
   }, [installTarget, loader]);
