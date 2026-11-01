@@ -2,51 +2,86 @@
 
 ## 系统要求
 
-| 项目 | 要求 |
+| 项目 | Windows | macOS |
+| --- | --- | --- |
+| 系统 | Windows 10 / 11（64 位） | macOS 11+（Intel 与 Apple Silicon 均支持） |
+| 安装包 | `HCL-Setup-x.x.x.exe`（约 81 MB） | `HCL-x.x.x.dmg` / `.zip`（约 100 MB） |
+| 磁盘 | 每个游戏实例另需 1–5 GB | 同左 |
+| Java | 不需要提前安装（见下文） | 同左 |
+
+## 下载
+
+- 最新版直链：<https://github.com/houshibo0101/HCL/releases/latest>
+- 历史版本：<https://github.com/houshibo0101/HCL/releases>
+
+| 平台 | 文件 |
 | --- | --- |
-| 操作系统 | Windows 10 / 11（64 位） |
-| 磁盘空间 | 安装包约 81 MB；每个游戏实例另需 1–5 GB |
-| Java | 启动游戏必需。Minecraft 1.20.5+ 建议 Java 21；较新版本建议 Java 17 |
+| Windows 64 位 | `HCL-Setup-x.x.x.exe` |
+| macOS Apple Silicon (M1/M2/M3/M4) | `HCL-x.x.x-arm64.dmg` 或 `.zip` |
+| macOS Intel | `HCL-x.x.x.dmg` 或 `.zip` |
 
-> Java 不需要提前安装：HCL 会自动检测系统 Java；如果没有检测到，可以在 **设置 → Java 环境** 里点击“获取 Java 21”下载（Adoptium Temurin），或手动浏览选择 `java.exe`。
+## Windows 安装步骤
 
-## 安装步骤
+1. 双击运行 `HCL Setup x.x.x.exe`。若 SmartScreen 提示“已保护你的电脑”：点击 **更多信息 → 仍要运行**（安装包未做代码签名，程序本身无恶意行为）
+2. 按向导完成安装，桌面和开始菜单会生成 **HCL** 快捷方式
+3. 首次启动会自动初始化数据目录
 
-1. 下载安装包：
-   - [Releases 页面](https://github.com/houshibo0101/HCL/releases) 的 `HCL Setup 1.0.0.exe`
-   - 或直接使用仓库 `release/win-unpacked/` 中的绿色版 `HCL.exe`
-2. 双击运行安装程序。若 Windows SmartScreen 提示“已保护你的电脑”：
-   - 点击 **更多信息**
-   - 点击 **仍要运行**
-   - （提示原因是安装包未做代码签名，程序本身无恶意行为）
-3. 按向导完成安装，桌面和开始菜单会生成 **HCL** 快捷方式
-4. 首次启动会自动初始化数据目录
+## macOS 安装步骤
+
+1. 打开 `.dmg`，把 **HCL** 拖入「应用程序」
+2. 首次打开若提示“无法验证开发者”：在启动器图标上 **右键 → 打开**，或到 **系统设置 → 隐私与安全性** 点击「仍要打开」
+3. 若提示“已损坏，无法打开”，在终端执行后重新打开：
+
+```bash
+xattr -cr /Applications/HCL.app
+```
+
+> 原因同样是应用未做 Apple 公证签名，属正常现象。
+
+## Java 环境说明
+
+**不需要提前安装 Java。**
+
+- **自动匹配**（v1.6.3 起）：启动游戏时，启动器按实例的官方版本信息自动确定所需 Java——1.16.5 及以下→**Java 8**，1.17–1.20.4→**Java 17**，1.20.5+→**Java 21**
+- **自动下载**：本机没有匹配的 Java 时，自动从 [Adoptium](https://adoptium.net) 下载对应 JRE 并安装到启动器数据目录 `data\runtime\`，国内优先走清华 TUNA 镜像，下载完自动继续启动；进度可在 **下载管理** 查看（咖啡杯图标）
+- **手动优先**：在 **设置 → Java 环境 → 浏览** 手动指定的 `java.exe` 优先级最高；也可以关闭「自动下载缺失的 Java」开关
+- 安装 Forge 时缺 Java 同样会自动补齐
 
 ## 数据目录
 
-HCL 所有游戏数据默认保存在 **D 盘**：
+Windows 默认所有数据保存在 **D 盘**；无 D 盘的机器自动落到 `%APPDATA%\HCL\data`：
 
 ```
 D:\HCL\
-├── HCL.exe                    # 程序本体（安装版位于安装目录）
-├── release\                   # 打包输出（仅源码仓库存在）
 └── data\
     ├── games\
     │   └── instances\<实例ID>\
     │       ├── versions\      # 版本 JSON 与客户端 jar
     │       ├── libraries\     # 运行库
-    │       ├── assets\        # 游戏资源（声音、语言、图标等）
+    │       ├── assets\        # 游戏资源
     │       ├── mods\          # Mod 文件
     │       ├── shaderpacks\   # 光影文件
-    │       └── saves\         # 存档
+    │       ├── saves\         # 存档
+    │       └── options.txt    # 游戏设置（含语言）
+    ├── runtime\               # 自动下载的 Java（java-8 / java-17 / java-21）
+    ├── tools\cpolar\          # 联机隧道程序（按需下载）
     ├── logs\error.log         # 下载/安装失败日志
     ├── settings.json          # 启动器设置
-    └── instances.json         # 实例列表
+    ├── instances.json         # 实例列表
+    └── accounts.json          # 游戏账户（离线 / 皮肤站）
 ```
 
-可在 **设置 → 存储位置** 中修改游戏目录；修改后新实例会安装到新位置，已有实例不受影响。
+可在 **设置 → 存储位置** 修改游戏目录；修改后只影响之后新建的实例。
+
+## 自动更新
+
+- 启动时自动检查新版本，运行中每 4 小时复查一次
+- 发现新版本自动后台下载，完成后右下角弹出更新卡片，点 **立即重启** 几秒钟完成安装；不点则退出应用时自动安装
+- 可在 **设置 → 启动器更新** 关闭；详情见 [[常见问题|FAQ]]
+
+macOS 当前版本自动更新需应用签名支持，暂以「检测新版本 + 提示手动下载」为主。
 
 ## 卸载
 
-- 使用系统“应用和功能”卸载 HCL 程序本体
-- 游戏数据在 `D:\HCL\data`，卸载程序不会删除它；如不再需要可手动删除
+- Windows：使用系统「应用和功能」卸载程序本体
+- 游戏数据在 `data\` 目录，卸载不会删除它；不再需要时可手动删除
