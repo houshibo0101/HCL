@@ -395,6 +395,44 @@ async function getForgeBuilds(mcVersion) {
   }
 }
 
+async function detectProxyJvmArgs() {
+  // Forge 官方安装器不支持镜像参数，内部下载走官方源。
+  // 如果用户开着系统代理，把代理注入安装器 JVM，让内部下载也能加速。
+  if (process.platform !== 'win32') return [];
+  try {
+    const read = (value) => new Promise((resolve) => {
+      execFile('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings', '/v', value], { windowsHide: true, timeout: 5000 }, (error, stdout) => {
+        resolve(error ? '' : String(stdout));
+      });
+    });
+    const enableOut = await read('ProxyEnable');
+    if (!/0x1/i.test(enableOut)) return [];
+    const serverOut = await read('ProxyServer');
+    const raw = serverOut.match(/ProxyServer\s+REG_SZ\s+(\S+)/)?.[1] || '';
+    let httpsAddr = '';
+    if (raw.includes('=')) {
+      const map = {};
+      for (const part of raw.split(';')) {
+        const [proto, addr] = part.split('=');
+        if (proto && addr) map[proto.trim().toLowerCase()] = addr.trim();
+      }
+      httpsAddr = map.https || map.http || '';
+    } else {
+      httpsAddr = raw;
+    }
+    const match = httpsAddr.match(/^([\w.-]+):(\d+)$/);
+    if (!match) return [];
+    const [, host, port] = match;
+    return [
+      `-Dhttps.proxyHost=${host}`, `-Dhttps.proxyPort=${port}`,
+      `-Dhttp.proxyHost=${host}`, `-Dhttp.proxyPort=${port}`,
+      '-Djava.net.useSystemProxies=true',
+    ];
+  } catch {
+    return [];
+  }
+}
+
 async function installVersion(version, name, loader = 'Vanilla', forgeId = null) {
   const taskId = createTask('game', `安装 Minecraft ${version.id}${loader !== 'Vanilla' ? ` · ${loader}` : ''}`);
   let attemptDir = null;
@@ -479,8 +517,10 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
         throw error;
       }
       updateTask(taskId, { detail: '正在运行 Forge 官方安装器（下载运行库并打补丁，需要几分钟）…', progress: 10 });
+      const proxyArgs = await detectProxyJvmArgs();
+      if (proxyArgs.length) updateTask(taskId, { detail: '正在运行 Forge 官方安装器（已复用系统代理加速下载）…', progress: 10 });
       await new Promise((resolve, reject) => {
-        execFile(java.path, ['-jar', installerPath, '--installClient', gameDir], {
+        execFile(java.path, [...proxyArgs, '-jar', installerPath, '--installClient', gameDir], {
           timeout: 15 * 60 * 1000,
           maxBuffer: 16 * 1024 * 1024,
           windowsHide: true,
