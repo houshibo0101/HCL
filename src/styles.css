@@ -379,6 +379,7 @@ html.theme-morphing, html.theme-morphing *, html.theme-morphing *::before, html.
 .update-panel-note { display: flex; align-items: center; gap: 8px; padding: 11px 13px; border-radius: 9px; font-size: 10.5px; }
 .update-panel-note.ok { background: rgba(var(--accent-rgb), .1); border: 1px solid var(--accent-dim-a); color: var(--green); }
 .update-panel-note.err { background: rgba(209, 79, 79, .1); border: 1px solid #5c3a3a; color: #eda5a5; }
+.update-panel-note.err span { display: block; width: 100%; color: #c9a3a3; font-size: 9px; }
 .update-panel-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 13px; }
 /* 设置页区块动作按钮（低调描边） */
 .section-action { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); background: transparent; color: #8f9d93; border-radius: 6px; font-size: 10px; padding: 6px 10px; flex-shrink: 0; transition: .16s; }

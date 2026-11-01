@@ -1354,6 +1354,12 @@ const GH_MIRRORS = [
   'https://ghfast.top/',
   'https://ghproxy.net/',
   'https://github.moeyy.xyz/',
+  'https://ghproxy.cc/',
+  'https://gh.llkk.cc/',
+];
+const JSDELIVR_SOURCES = [
+  'https://cdn.jsdelivr.net/gh/houshibo0101/HCL@main/package.json',
+  'https://fastly.jsdelivr.net/gh/houshibo0101/HCL@main/package.json',
 ];
 
 function isNewerVersion(remote, local) {
@@ -1366,17 +1372,46 @@ function isNewerVersion(remote, local) {
   return false;
 }
 
+// 所有镜像并行竞速，任何一个成功立即返回（避免串行等满 60 秒）
 async function findMirrorUpdate() {
-  for (const prefix of GH_MIRRORS) {
+  const attempts = GH_MIRRORS.map(async (prefix) => {
+    const res = await fetch(`${prefix}https://api.github.com/repos/${GH_REPO}/releases/latest`, { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(12000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const info = await res.json();
+    const tag = String(info.tag_name || '').replace(/^v/, '');
+    if (!tag || !isNewerVersion(tag, app.getVersion())) throw new Error('无新版本');
+    return { prefix, tag };
+  });
+  try {
+    return await Promise.any(attempts);
+  } catch {
+    return null;
+  }
+}
+
+// jsDelivr CDN（非 GitHub 域名）作为版本元数据备用通道
+async function findJsDelivrUpdate() {
+  for (const url of JSDELIVR_SOURCES) {
     try {
-      const res = await fetch(`${prefix}https://api.github.com/repos/${GH_REPO}/releases/latest`, { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(15000) });
+      const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(12000) });
       if (!res.ok) continue;
-      const info = await res.json();
-      const tag = String(info.tag_name || '').replace(/^v/, '');
-      if (tag && isNewerVersion(tag, app.getVersion())) return { prefix, tag };
-    } catch { /* 该镜像不通，尝试下一个 */ }
+      const pkg = await res.json();
+      const tag = String(pkg.version || '');
+      if (tag && isNewerVersion(tag, app.getVersion())) return { tag };
+    } catch { /* 下一个源 */ }
   }
   return null;
+}
+
+// 找一个能取到 latest.yml 的镜像作为下载通道
+async function findWorkingMirrorBase() {
+  for (const prefix of GH_MIRRORS) {
+    try {
+      const res = await fetch(`${prefix}https://github.com/${GH_REPO}/releases/latest/download/latest.yml`, { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(12000) });
+      if (res.ok) return prefix;
+    } catch { /* 下一个 */ }
+  }
+  return GH_MIRRORS[0];
 }
 
 // 自动区分国内外：探测 GitHub 可达性与延迟，决定更新源顺序（5 分钟缓存）
@@ -1409,14 +1444,18 @@ async function checkOfficialFeed() {
 }
 
 async function checkMirrorFeed() {
+  // 版本元数据：镜像 API 并行竞速 → jsDelivr CDN 兜底
   const mirror = await findMirrorUpdate();
-  if (!mirror) throw new Error('所有更新镜像均不可用');
-  autoUpdater.setFeedURL({ provider: 'generic', url: `${mirror.prefix}https://github.com/${GH_REPO}/releases/latest/download/` });
+  const viaMeta = mirror ? '镜像 API' : 'jsDelivr';
+  const tag = (mirror || await findJsDelivrUpdate())?.tag;
+  if (!tag) throw new Error('无新版本');
+  const base = await findWorkingMirrorBase();
+  autoUpdater.setFeedURL({ provider: 'generic', url: `${base}https://github.com/${GH_REPO}/releases/latest/download/` });
   feedMode = 'mirror';
   const result = await autoUpdater.checkForUpdates();
   updateRetryAttempts = 0;
   scheduleNextUpdateCheck(UPDATE_CHECK_INTERVAL);
-  return { status: result?.isUpdateAvailable ? 'available' : 'none', version: result?.updateInfo?.version || app.getVersion(), via: 'mirror' };
+  return { status: result?.isUpdateAvailable ? 'available' : 'none', version: result?.updateInfo?.version || app.getVersion(), via: 'mirror', viaMeta };
 }
 
 async function checkForUpdatesWithFallback() {

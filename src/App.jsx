@@ -613,7 +613,7 @@ export default function App() {
           <div className={updateStatus === 'none' ? 'latest' : ''}><span>最新版本</span><strong>{updateStatus === 'none' ? `v${state.appVersion}` : updateInfo?.version ? `v${updateInfo.version}` : checking ? '检查中…' : '待检查'}</strong></div>
         </div>
         {updateStatus === 'none' && <div className="update-panel-note ok"><CheckCircle2 size={15} />已是最新版本，无需更新</div>}
-        {updateStatus === 'error' && <div className="update-panel-note err"><XCircle size={15} />检查失败：{updateInfo.message || '网络异常'}（已尝试直连与镜像）</div>}
+        {updateStatus === 'error' && <div className="update-panel-note err"><XCircle size={15} />检查失败：{updateInfo.message || '网络异常'}（已尝试直连 GitHub 与多个国内镜像）<span>可稍后重试，或从 Releases 页手动下载</span></div>}
         {updateStatus === 'dev' && <div className="update-panel-note err"><Info size={15} />开发模式下暂不支持应用内更新</div>}
         {updateStatus === 'unsupported' && <div className="update-panel-note err"><Info size={15} />当前平台暂不支持应用内更新，请从 GitHub Releases 手动下载</div>}
         {(checking || updateStatus === 'available' || updateStatus === 'downloading' || updateStatus === 'ready') && <ol className="update-steps">
