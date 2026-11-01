@@ -770,6 +770,7 @@ async function listJavas() {
     if (process.platform === 'win32') candidates.push('java.exe');
     else candidates.push('/usr/bin/java');
   }
+  const results = [];
   for (const candidate of [...new Set(candidates)]) {
     try {
       const version = await new Promise((resolve, reject) => {
@@ -799,7 +800,7 @@ const JAVA_MANAGED_ROOT = path.join(DATA_ROOT, 'runtime');
 function parseJavaMajor(version) {
   const m = String(version).match(/^(1\.)?(\d+)/);
   if (!m) return 0;
-  return m[1] ? Number(m[2]) : Number(m[1]); // "1.8.0_402" → 8，"21.0.5" → 21
+  return Number(m[2]); // "1.8.0_402" → 8，"21.0.5" → 21，"17.0.14" → 17
 }
 
 function requiredJavaMajorFallback(versionId) {
@@ -978,7 +979,7 @@ async function launchGame(instanceId) {
   const instance = instances.find((item) => item.id === instanceId);
   if (!instance) throw new Error('请先选择游戏实例');
   if (gameProcesses.has(instanceId)) throw new Error('这个实例已经在运行中');
-  const { java, required: requiredMajor } = await resolveJavaForInstance(instance);
+  const { java } = await resolveJavaForInstance(instance);
   const runtimeVersion = instance.runtimeVersion || instance.version;
   const metaPath = path.join(instance.versionDir, `${runtimeVersion}.json`);
   let meta = JSON.parse(await fsp.readFile(metaPath, 'utf8'));

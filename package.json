@@ -1,6 +1,6 @@
 {
   "name": "hcl-launcher",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "private": true,
   "author": "HCL",
   "description": "HCL - a clean Minecraft launcher with version, mod and shader downloads",
@@ -9,7 +9,8 @@
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "build": "vite build",
     "start": "electron .",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "lint": "eslint electron/ src/"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
@@ -23,6 +24,7 @@
     "concurrently": "^9.1.2",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
+    "eslint": "^10.14.0",
     "vite": "^6.0.5",
     "wait-on": "^8.0.1"
   },
@@ -47,7 +49,10 @@
       "icon": "public/hcl.ico"
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "public/hcl-mac.png",
       "category": "public.app-category.games",
       "identity": null
