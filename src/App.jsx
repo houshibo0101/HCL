@@ -446,6 +446,21 @@ export default function App() {
   const [running, setRunning] = useState([]);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
+  const [splash, setSplash] = useState('in'); // in → out → gone（PCL2 式启动画面）
+  const bootAt = useRef(Date.now());
+  useEffect(() => {
+    if (!ready) return;
+    if (splash === 'in') {
+      // 至少展示 1 秒，让弹入+悬浮动画完整呈现
+      const wait = Math.max(0, 1000 - (Date.now() - bootAt.current));
+      const t = setTimeout(() => setSplash('out'), wait);
+      return () => clearTimeout(t);
+    }
+    if (splash === 'out') {
+      const t = setTimeout(() => setSplash('gone'), 430);
+      return () => clearTimeout(t);
+    }
+  }, [ready, splash]);
   const [java, setJava] = useState(null);
   const [accounts, setAccounts] = useState([]);
   const [currentAccountId, setCurrentAccountId] = useState(null);
@@ -545,7 +560,12 @@ export default function App() {
     catch (e) { toast(e.message, 'error'); }
   };
   const isMac = state.platform === 'darwin';
-  if (!ready) return <div className="app-loading"><Logo /><LoaderCircle className="spin" size={22} /><span>正在准备你的世界…</span></div>;
+  if (splash !== 'gone') return <div className={`app-splash ${splash === 'out' ? 'out' : ''}`}>
+    <div className="app-splash-stage"><div className="app-splash-glow" /><img src="hcl.png" alt="HCL" className="app-splash-img" /></div>
+    <strong>HCL</strong>
+    <div className="app-splash-bar"><i /></div>
+    <span>正在准备你的世界…</span>
+  </div>;
   return <div className={`app-shell ${isMac ? 'platform-mac' : ''}`}>
     <header className="titlebar"><div className="titlebar-brand"><Logo compact /></div><div className="window-title"><span>HCL</span><i />{PAGE_META[page][0]}</div>{!isMac && <div className="window-controls"><button onClick={() => window.hcl.windowMinimize()}><Minus size={16} /></button><button onClick={() => window.hcl.windowMaximize()}><Square size={13} /></button><button className="window-close" onClick={() => window.hcl.windowClose()}><X size={17} /></button></div>}</header>
     <aside className="sidebar"><div className="sidebar-brand"><Logo /></div><nav className="main-nav"><span className="nav-label">启动器</span>{NAV_ITEMS.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => navigate(id)}><Icon size={19} /><span>{label}</span>{id === 'downloads' && activeDownloads > 0 && <b>{activeDownloads}</b>}{page === id && <i />}</button>)}</nav><div className="sidebar-bottom"><button className={`settings-nav ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={19} /><span>设置</span></button><button className="sidebar-player" onClick={() => navigate('settings')}><div className="mini-avatar">{state.settings.username.slice(0, 1).toUpperCase()}<i /></div><div><strong>{state.settings.username}</strong><span>离线模式</span></div><ChevronRight size={15} /></button>{updateInfo?.status === 'ready'
