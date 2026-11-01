@@ -390,7 +390,7 @@ function SettingsPage({ settings, dataRoot, appVersion, platform, onCheckUpdates
   return <div className="page settings-page">
     <div className="settings-layout"><div className="settings-main">
       <section className="settings-section"><div className="settings-title"><UserRound size={19} /><div><h2>玩家设置</h2><p>用于离线模式的游戏内显示名称</p></div></div><label className="field horizontal"><span>玩家名称</span><div><input value={form.username} maxLength={16} onChange={(e) => update('username', e.target.value)} /><small>建议使用 3–16 个字母、数字或下划线</small></div></label><div className="toggle-row"><div><strong>游戏语言自动设为简体中文</strong><span>每次启动前自动写入语言设置，新实例第一次进入游戏即为中文界面</span></div><button className={`switch ${form.autoChineseLang !== false ? 'on' : ''}`} onClick={async () => { update('autoChineseLang', form.autoChineseLang === false); try { await onSave({ ...form, autoChineseLang: form.autoChineseLang === false }); } catch {} }}><i /></button></div></section>
-      <section className="settings-section"><div className="settings-title"><Users size={19} /><div><h2>游戏账户</h2><p>离线账户或皮肤站账户（Yggdrasil 外置登录，进在线服务器时验证身份）</p></div><button className="check-update" onClick={() => setAccountModal(true)}><LogIn size={12} />添加账户</button></div>
+      <section className="settings-section"><div className="settings-title"><Users size={19} /><div><h2>游戏账户</h2><p>离线账户或皮肤站账户（Yggdrasil 外置登录，进在线服务器时验证身份）</p></div><button className="section-action" onClick={() => setAccountModal(true)}><LogIn size={12} />添加账户</button></div>
         <div className="account-list">{accounts.map((item) => <div key={item.id} className={`account-row ${item.id === currentAccountId ? 'current' : ''}`} onClick={() => window.hcl.selectAccount(item.id).then(refreshAccounts).catch((e) => toast(e.message, 'error'))}><div className="mini-avatar">{item.name.slice(0, 1).toUpperCase()}<i /></div><div className="account-info"><strong>{item.name}</strong><span>{item.type === 'yggdrasil' ? (() => { try { return new URL(item.apiRoot).hostname; } catch { return '外置登录'; } })() : '离线模式'}</span></div>{item.id === currentAccountId && <span className="current-check"><CheckCircle2 size={15} />当前</span>}<button className="account-remove" title="删除账户" onClick={(e) => { e.stopPropagation(); window.hcl.removeAccount(item.id).then(refreshAccounts).catch((err) => toast(err.message, 'error')); }}><Trash2 size={14} /></button></div>)}
           {!accounts.length && <div className="forge-loading">还没有账户，点击右上角「添加账户」创建</div>}
         </div></section>
@@ -446,6 +446,8 @@ export default function App() {
   const [running, setRunning] = useState([]);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
+  const [updatePanel, setUpdatePanel] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [splash, setSplash] = useState('in'); // in → out → gone（PCL2 式启动画面）
   const bootAt = useRef(Date.now());
   useEffect(() => {
@@ -539,15 +541,20 @@ export default function App() {
       if (e.message?.includes('Java')) navigate('settings');
     } finally { setLaunching(false); }
   };
-  const checkUpdates = async () => {
+  const checkUpdates = async (openPanel = false) => {
+    if (openPanel) setUpdatePanel(true);
+    setChecking(true);
     try {
       const result = await window.hcl.checkForUpdates();
-      if (result?.status === 'none') toast('当前已是最新版本');
-      else if (result?.status === 'dev') toast('开发模式下暂不支持应用内更新', 'info');
-      else if (result?.status === 'unsupported') toast('当前平台暂不支持应用内更新，请从 GitHub Releases 下载新版本', 'info');
-      else if (result?.status === 'available') toast(`发现新版本 v${result.version}，正在后台下载`);
-      else if (result?.status === 'error') toast(`检查更新失败：${result.message}`, 'error');
-    } catch (e) { toast(e.message || '检查更新失败', 'error'); }
+      if (!openPanel) {
+        if (result?.status === 'none') toast('当前已是最新版本');
+        else if (result?.status === 'dev') toast('开发模式下暂不支持应用内更新', 'info');
+        else if (result?.status === 'unsupported') toast('当前平台暂不支持应用内更新，请从 GitHub Releases 下载新版本', 'info');
+        else if (result?.status === 'available') toast(`发现新版本 v${result.version}，正在后台下载`);
+        else if (result?.status === 'error') toast(`检查更新失败：${result.message}`, 'error');
+      }
+    } catch (e) { if (!openPanel) toast(e.message || '检查更新失败', 'error'); }
+    finally { setChecking(false); }
   };
   const saveSettings = async (form) => {
     const settings = await window.hcl.saveSettings(form);
@@ -560,6 +567,7 @@ export default function App() {
     catch (e) { toast(e.message, 'error'); }
   };
   const isMac = state.platform === 'darwin';
+  const updateStatus = updateInfo?.status;
   if (splash !== 'gone') return <div className={`app-splash ${splash === 'out' ? 'out' : ''}`}>
     <div className="app-splash-stage"><div className="app-splash-glow" /><img src="hcl.png" alt="HCL" className="app-splash-img" /></div>
     <strong>HCL</strong>
@@ -574,16 +582,53 @@ export default function App() {
           ? <div className="sidebar-version" title="新版本正在后台下载">正在下载更新 {Math.floor(updateInfo.percent || 0)}%</div>
           : updateInfo?.status === 'error'
             ? <div className="sidebar-version error" title="点击重试检查更新" onClick={checkUpdates}>更新检查失败 <span>•</span> 点击重试</div>
-            : <div className="sidebar-version" title="点击检查启动器更新" onClick={checkUpdates}>HCL v{state.appVersion || '1.6.5'} <span>•</span> 点击检查更新</div>}</div></aside>
+            : <div className="sidebar-version" title="点击检查启动器更新" onClick={() => checkUpdates(true)}>HCL v{state.appVersion || '1.6.5'} <span>•</span> 点击检查更新</div>}</div></aside>
     <main className="main-area"><div className="page-header"><div><h1>{PAGE_META[page][0]}</h1><p>{PAGE_META[page][1]}</p></div>{page === 'home' && <button className="current-instance" onClick={() => setInstanceModal(true)}><div className="current-instance-icon"><Gamepad2 size={18} /></div><div><span>当前实例</span><strong>{selected?.name || '尚未安装游戏'}</strong></div><ChevronDown size={16} /></button>}</div><div className="page-scroll">
-      {page === 'home' && <HomePage instances={state.instances} selected={selected} settings={state.settings} tasks={state.tasks} onLaunch={launch} launching={launching} running={selected && running.includes(selected.id)} onNavigate={navigate} onManage={() => setInstanceModal(true)} onSelect={selectInstance} onOpenFolder={() => window.hcl.openFolder('games')} java={java} appVersion={state.appVersion} onCheckUpdates={checkUpdates} platform={state.platform} account={currentAccount} />}
+      {page === 'home' && <HomePage instances={state.instances} selected={selected} settings={state.settings} tasks={state.tasks} onLaunch={launch} launching={launching} running={selected && running.includes(selected.id)} onNavigate={navigate} onManage={() => setInstanceModal(true)} onSelect={selectInstance} onOpenFolder={() => window.hcl.openFolder('games')} java={java} appVersion={state.appVersion} onCheckUpdates={() => checkUpdates(true)} platform={state.platform} account={currentAccount} />}
       {page === 'versions' && <VersionsPage installed={state.instances} onInstall={install} installing={installing} settings={state.settings} />}
       {(page === 'mods' || page === 'shaders') && <ResourceBrowser key={page} kind={page === 'mods' ? 'mod' : 'shader'} instances={state.instances} selected={selected} onDownload={downloadResource} onRequireInstance={() => selected ? setInstanceModal(true) : navigate('versions')} />}
       {page === 'downloads' && <DownloadsPage tasks={state.tasks} onCancel={window.hcl.cancelTask} onOpenLog={() => window.hcl.openErrorLog()} onInstallUpdate={() => window.hcl.installUpdate()} onClear={async () => { const tasks = await window.hcl.clearTasks(); setState((old) => ({ ...old, tasks })); }} />}
       {page === 'network' && <NetworkPage toast={toast} settings={state.settings} />}
-      {page === 'settings' && <SettingsPage settings={state.settings} dataRoot={state.dataRoot} appVersion={state.appVersion} platform={state.platform} onCheckUpdates={checkUpdates} onSave={saveSettings} onChooseJava={window.hcl.chooseJava} onChooseDirectory={window.hcl.chooseGameDirectory} onDetectJava={window.hcl.detectJava} java={java} setJava={setJava} onOpenRoot={() => window.hcl.openFolder('root')} toast={toast} accounts={accounts} currentAccountId={currentAccountId} refreshAccounts={refreshAccounts} />}
+      {page === 'settings' && <SettingsPage settings={state.settings} dataRoot={state.dataRoot} appVersion={state.appVersion} platform={state.platform} onCheckUpdates={() => checkUpdates(true)} onSave={saveSettings} onChooseJava={window.hcl.chooseJava} onChooseDirectory={window.hcl.chooseGameDirectory} onDetectJava={window.hcl.detectJava} java={java} setJava={setJava} onOpenRoot={() => window.hcl.openFolder('root')} toast={toast} accounts={accounts} currentAccountId={currentAccountId} refreshAccounts={refreshAccounts} />}
     </div></main>
     {instanceModal && <InstanceModal instances={state.instances} selectedId={selected?.id} onClose={() => setInstanceModal(false)} onSelect={selectInstance} onDelete={deleteInstance} onOpenFolder={(id) => window.hcl.openFolder('instance', id)} onNew={() => navigate('versions')} />}
+    {updatePanel && <Modal title="启动器更新" subtitle="自动检查 · 后台下载 · 一键安装" onClose={() => setUpdatePanel(false)}>
+      <div className="update-panel">
+        <div className="update-versions">
+          <div><span>当前版本</span><strong>v{state.appVersion || '1.7.2'}</strong></div>
+          <i>→</i>
+          <div className={updateStatus === 'none' ? 'latest' : ''}><span>最新版本</span><strong>{updateStatus === 'none' ? `v${state.appVersion}` : updateInfo?.version ? `v${updateInfo.version}` : checking ? '检查中…' : '待检查'}</strong></div>
+        </div>
+        {updateStatus === 'none' && <div className="update-panel-note ok"><CheckCircle2 size={15} />已是最新版本，无需更新</div>}
+        {updateStatus === 'error' && <div className="update-panel-note err"><XCircle size={15} />检查失败：{updateInfo.message || '网络异常'}（已尝试直连与镜像）</div>}
+        {updateStatus === 'dev' && <div className="update-panel-note err"><Info size={15} />开发模式下暂不支持应用内更新</div>}
+        {updateStatus === 'unsupported' && <div className="update-panel-note err"><Info size={15} />当前平台暂不支持应用内更新，请从 GitHub Releases 手动下载</div>}
+        {(checking || updateStatus === 'available' || updateStatus === 'downloading' || updateStatus === 'ready') && <ol className="update-steps">
+          <li className={checking && !updateStatus ? 'running' : 'done'}>
+            <span className="step-icon">{checking && !updateStatus ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={16} />}</span>
+            <div className="step-body"><strong>检查更新</strong><span className="step-desc">直连 GitHub，失败自动切换国内镜像</span></div>
+            <span className="step-state">{checking && !updateStatus ? '正在连接…' : '完成'}</span>
+          </li>
+          <li className={updateStatus === 'ready' ? 'done' : (updateStatus === 'available' || updateStatus === 'downloading') ? 'running' : ''}>
+            <span className="step-icon"><Download size={15} /></span>
+            <div className="step-body">
+              <strong>下载新版本</strong><span className="step-desc">后台静默下载，SHA512 校验保证完整</span>
+              {(updateStatus === 'available' || updateStatus === 'downloading') && <div className="progress-track"><i className="downloading" style={{ width: `${Math.max(4, Math.floor(updateInfo?.percent || 0))}%` }} /></div>}
+            </div>
+            <span className="step-state">{updateStatus === 'ready' ? '完成' : (updateStatus === 'available' || updateStatus === 'downloading') ? `${Math.floor(updateInfo?.percent || 0)}%` : '等待'}</span>
+          </li>
+          <li className={updateStatus === 'ready' ? 'running' : ''}>
+            <span className="step-icon"><Rocket size={15} /></span>
+            <div className="step-body"><strong>重启安装</strong><span className="step-desc">重启启动器即自动完成安装，几秒钟</span></div>
+            {updateStatus === 'ready' && <button className="button primary small" onClick={() => window.hcl.installUpdate()}><Rocket size={13} />立即重启</button>}
+          </li>
+        </ol>}
+        <div className="update-panel-actions">
+          <button className="button ghost small" onClick={() => setUpdatePanel(false)}>关闭</button>
+          {updateStatus === 'error' && <button className="button secondary small" onClick={() => checkUpdates(true)}><RefreshCw size={13} />重试</button>}
+        </div>
+      </div>
+    </Modal>}
     {updateInfo?.status === 'ready' && !updateBannerDismissed && <div className="update-banner">
       <div className="update-banner-icon"><Rocket size={20} /></div>
       <div className="update-banner-body"><strong>HCL v{updateInfo.version} 已就绪</strong><span>重启启动器即可完成安装，只需几秒钟</span></div>
