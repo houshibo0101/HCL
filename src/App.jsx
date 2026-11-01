@@ -127,6 +127,8 @@ function VersionsPage({ installed, onInstall, installing, settings }) {
   const [installTarget, setInstallTarget] = useState(null);
   const [name, setName] = useState('');
   const [loader, setLoader] = useState('Vanilla');
+  const [forgeBuilds, setForgeBuilds] = useState(null);
+  const [forgeId, setForgeId] = useState('');
   const load = async (refresh = false) => {
     setLoading(true); setError('');
     try { setData(await window.hcl.getVersions(refresh)); }
@@ -136,6 +138,18 @@ function VersionsPage({ installed, onInstall, installing, settings }) {
   useEffect(() => { load(); }, []);
   const filtered = useMemo(() => (data?.versions || []).filter((v) => (filter === 'all' || v.type === filter) && v.id.toLowerCase().includes(query.toLowerCase())), [data, filter, query]);
   useEffect(() => { setLimit(30); }, [filter, query]);
+  useEffect(() => {
+    if (!installTarget || loader !== 'Forge') return;
+    let active = true;
+    setForgeBuilds(null);
+    setForgeId('');
+    window.hcl.listForge(installTarget.id).then((data) => {
+      if (!active) return;
+      setForgeBuilds(data);
+      setForgeId(data.recommended || data.latest || data.builds[0]?.id || '');
+    }).catch((error) => active && setForgeBuilds({ builds: [], error: error.message }));
+    return () => { active = false; };
+  }, [installTarget, loader]);
   return <div className="page versions-page">
     <div className="page-toolbar"><div className="search-box"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索版本，例如 1.21.1" />{query && <button onClick={() => setQuery('')}><X size={15} /></button>}</div><button className="button secondary small" onClick={() => load(true)} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''} />刷新清单</button></div>
     <div className="filter-row"><div className="segmented">{[['release', '正式版'], ['snapshot', '快照'], ['old_beta', 'Beta'], ['old_alpha', 'Alpha'], ['all', '全部']].map(([id, label]) => <button key={id} className={filter === id ? 'active' : ''} onClick={() => setFilter(id)}>{label}</button>)}</div><span className="result-count">{filtered.length} 个版本</span></div>
@@ -146,15 +160,16 @@ function VersionsPage({ installed, onInstall, installing, settings }) {
         return <article className="version-card" key={version.id}>
           <div className={`version-icon ${version.type}`}><Box size={25} /></div>
           <div className="version-info"><div className="version-title"><h3>Minecraft {version.id}</h3>{data.latest.release === version.id && <span className="latest-tag">最新</span>}</div><div className="version-meta"><span className={`type-tag ${version.type}`}>{TYPE_LABELS[version.type] || version.type}</span><span><CalendarDays size={12} />{new Date(version.releaseTime).toLocaleDateString('zh-CN')}</span></div></div>
-          <button className={`button small ${isInstalled ? 'installed' : 'secondary'}`} onClick={() => { setInstallTarget(version); setName(`Minecraft ${version.id}`); setLoader('Vanilla'); }} disabled={installing}><Download size={15} />{isInstalled ? '再次安装' : '安装'}</button>
+          <button className={`button small ${isInstalled ? 'installed' : 'secondary'}`} onClick={() => { setInstallTarget(version); setName(`Minecraft ${version.id}`); setLoader('Vanilla'); setForgeBuilds(null); setForgeId(''); }} disabled={installing}><Download size={15} />{isInstalled ? '再次安装' : '安装'}</button>
         </article>;
       })}</div>
       {!filtered.length && <EmptyState icon={Search} title="没有找到这个版本" text="试试其他版本号或切换版本类型。" />}
       {filtered.length > limit && <button className="load-more" onClick={() => setLimit(limit + 30)}>显示更多版本<ChevronDown size={16} /></button>}
     </>}
     {installTarget && <Modal title="创建游戏实例" subtitle={`Minecraft ${installTarget.id} · ${TYPE_LABELS[installTarget.type]}`} onClose={() => !installing && setInstallTarget(null)}>
-      <div className="modal-body"><label className="field"><span>实例名称</span><input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} autoFocus /></label><div className="loader-field"><span>运行加载器</span><div className="loader-options"><button className={loader === 'Vanilla' ? 'selected' : ''} onClick={() => setLoader('Vanilla')}><Box size={18} /><div><strong>原版</strong><small>纯净的 Minecraft 体验</small></div>{loader === 'Vanilla' && <Check size={14} />}</button><button className={loader === 'Fabric' ? 'selected' : ''} onClick={() => setLoader('Fabric')}><Layers3 size={18} /><div><strong>Fabric</strong><small>轻量加载器，支持 Fabric Mod 与 Iris</small></div>{loader === 'Fabric' && <Check size={14} />}</button></div></div><div className="install-summary"><div><Box size={19} /><span>游戏版本<strong>{installTarget.id} · {loader}</strong></span></div><div><HardDrive size={19} /><span>安装位置<strong>{settings?.gameDirectory || 'D:\\HCL\\data\\games'}</strong></span></div></div><p className="modal-hint"><Info size={14} />客户端、资源文件和运行库将一并下载，所需空间因版本而异。</p></div>
-      <footer className="modal-footer"><button className="button ghost" onClick={() => setInstallTarget(null)} disabled={installing}>取消</button><button className="button primary" disabled={!name.trim() || installing} onClick={() => { onInstall(installTarget, name, loader).catch(() => {}); setInstallTarget(null); }}>{installing ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{installing ? '正在创建…' : '开始安装'}</button></footer>
+      <div className="modal-body"><label className="field"><span>实例名称</span><input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} autoFocus /></label><div className="loader-field"><span>运行加载器</span><div className="loader-options three"><button className={loader === 'Vanilla' ? 'selected' : ''} onClick={() => setLoader('Vanilla')}><Box size={18} /><div><strong>原版</strong><small>纯净体验</small></div>{loader === 'Vanilla' && <Check size={14} />}</button><button className={loader === 'Fabric' ? 'selected' : ''} onClick={() => setLoader('Fabric')}><Layers3 size={18} /><div><strong>Fabric</strong><small>轻量，支持 Iris 光影</small></div>{loader === 'Fabric' && <Check size={14} />}</button><button className={loader === 'Forge' ? 'selected' : ''} onClick={() => setLoader('Forge')}><Package size={18} /><div><strong>Forge</strong><small>模组生态最全</small></div>{loader === 'Forge' && <Check size={14} />}</button></div></div>
+      {loader === 'Forge' && <div className="forge-picker">{forgeBuilds === null ? <span className="forge-loading"><LoaderCircle className="spin" size={14} />正在获取 Forge 版本列表…</span> : forgeBuilds.error ? <span className="forge-error"><AlertCircle size={14} />{forgeBuilds.error}</span> : <label className="field"><span>Forge 版本{forgeBuilds.recommended ? '（已推荐）' : ''}</span><select value={forgeId} onChange={(e) => setForgeId(e.target.value)}>{forgeBuilds.builds.map((build) => <option key={build.id} value={build.id}>{build.build}{build.build === forgeBuilds.recommended ? ' · 推荐' : ''}{build.build === forgeBuilds.latest && build.build !== forgeBuilds.recommended ? ' · 最新' : ''}</option>)}</select></label>}</div>}<div className="install-summary"><div><Box size={19} /><span>游戏版本<strong>{installTarget.id} · {loader}</strong></span></div><div><HardDrive size={19} /><span>安装位置<strong>{settings?.gameDirectory || 'D:\\HCL\\data\\games'}</strong></span></div></div><p className="modal-hint"><Info size={14} />客户端、资源文件和运行库将一并下载，所需空间因版本而异。</p></div>
+      <footer className="modal-footer"><button className="button ghost" onClick={() => setInstallTarget(null)} disabled={installing}>取消</button><button className="button primary" disabled={!name.trim() || installing || (loader === 'Forge' && (!forgeId || !forgeBuilds || forgeBuilds.error))} onClick={() => { onInstall(installTarget, name, loader, forgeId).catch(() => {}); setInstallTarget(null); }}>{installing ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{installing ? '正在创建…' : '开始安装'}</button></footer>
     </Modal>}
   </div>;
 }
@@ -172,7 +187,7 @@ function ResourceBrowser({ kind, instances, selected, onDownload, onRequireInsta
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState('relevance');
-  const [loader, setLoader] = useState(selected?.loader === 'Fabric' ? 'fabric' : '');
+  const [loader, setLoader] = useState(['Fabric', 'Forge', 'NeoForge', 'Quilt'].includes(selected?.loader) ? selected.loader.toLowerCase() : '');
   const [gameVersion, setGameVersion] = useState(selected?.version || '');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -268,7 +283,7 @@ function InstanceModal({ instances, selectedId, onClose, onSelect, onDelete, onO
 
 export default function App() {
   const [page, setPage] = useState('home');
-  const [state, setState] = useState({ settings: { username: 'Player', memory: 4096 }, instances: [], tasks: [], dataRoot: 'D:\\HCL\\data', appVersion: '' });
+  const [state, setState] = useState({ settings: { username: 'Player', memory: 4096 }, instances: [], tasks: [], dataRoot: 'D:\\HCL\\data', appVersion: '1.2.0' });
   const [ready, setReady] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [instanceModal, setInstanceModal] = useState(false);
@@ -300,10 +315,10 @@ export default function App() {
     await window.hcl.selectInstance(id);
     setState((old) => ({ ...old, settings: { ...old.settings, selectedInstanceId: id } }));
   };
-  const install = async (version, name, loader = 'Vanilla') => {
+  const install = async (version, name, loader = 'Vanilla', forgeId = null) => {
     setInstalling(true);
     try {
-      const result = await window.hcl.installVersion(version, name, loader);
+      const result = await window.hcl.installVersion(version, name, loader, forgeId);
       setState((old) => ({ ...old, instances: [result.instance, ...old.instances], settings: { ...old.settings, selectedInstanceId: result.instance.id } }));
       toast(`Minecraft ${version.id} 安装完成`);
       return result;

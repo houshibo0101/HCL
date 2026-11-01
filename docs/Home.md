@@ -9,7 +9,7 @@
 | 游戏版本下载 | Mojang 官方版本源，支持正式版 / 快照 / Beta / Alpha |
 | Mod 下载 | Modrinth 资源，按游戏版本与加载器筛选，直下到实例 `mods` |
 | 光影下载 | Modrinth 光影资源，保存到实例 `shaderpacks` |
-| 实例管理 | 原版 / Fabric 实例，独立存档、Mod、光影 |
+| 实例管理 | 原版 / Fabric / Forge 实例，独立存档、Mod、光影 |
 | 下载管理 | 后台多任务、进度、取消、失败日志 |
 | 启动设置 | 离线玩家名、内存、Java 检测与自定义路径 |
 

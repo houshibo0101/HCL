@@ -331,7 +331,71 @@ async function getVersionManifest(refresh = false) {
   }
 }
 
-async function installVersion(version, name, loader = 'Vanilla') {
+async function fetchText(url, options = {}) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: options.signal || AbortSignal.timeout(30000),
+        headers: { 'User-Agent': USER_AGENT, ...(options.headers || {}) },
+      });
+      if (!response.ok) throw new Error(`网络请求失败 (${response.status})：${new URL(url).hostname}`);
+      return await response.text();
+    } catch (error) {
+      lastError = error;
+      if (error.name === 'AbortError' || attempt === 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
+function compareBuildDesc(a, b) {
+  const pa = String(a).split(/[.-]/).map((x) => Number(x) || 0);
+  const pb = String(b).split(/[.-]/).map((x) => Number(x) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pb[i] || 0) - (pa[i] || 0);
+    if (diff) return diff;
+  }
+  return String(b).localeCompare(String(a));
+}
+
+async function getForgeBuilds(mcVersion) {
+  const prefix = `${mcVersion}-`;
+  try {
+    const xml = await fetchText('https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml');
+    const builds = [...xml.matchAll(/<version>([^<]+)<\/version>/g)]
+      .map((m) => m[1])
+      .filter((id) => id.startsWith(prefix))
+      .map((id) => ({ id, build: id.slice(prefix.length) }))
+      .sort((a, b) => compareBuildDesc(a.build, b.build));
+    if (!builds.length) throw new Error(`Forge 暂不支持 Minecraft ${mcVersion}`);
+    let recommended = null;
+    let latest = null;
+    try {
+      const promos = await fetchJson('https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json');
+      recommended = promos.promos?.[`${mcVersion}-recommended`] || null;
+      latest = promos.promos?.[`${mcVersion}-latest`] || recommended;
+    } catch {}
+    return { builds, recommended, latest };
+  } catch (error) {
+    // 国内网络兜底：BMCLAPI 镜像
+    try {
+      const data = await fetchJson(`https://bmclapi2.bangbang93.com/forge/minecraft/${encodeURIComponent(mcVersion)}`);
+      if (!Array.isArray(data) || !data.length) throw new Error(`Forge 暂不支持 Minecraft ${mcVersion}`);
+      const builds = data
+        .map((item) => ({ id: `${item.mcversion}-${item.version}`, build: String(item.version) }))
+        .filter((item) => item.id.startsWith(prefix))
+        .sort((a, b) => compareBuildDesc(a.build, b.build));
+      return { builds, recommended: null, latest: null };
+    } catch {
+      throw error;
+    }
+  }
+}
+
+async function installVersion(version, name, loader = 'Vanilla', forgeId = null) {
   const taskId = createTask('game', `安装 Minecraft ${version.id}${loader !== 'Vanilla' ? ` · ${loader}` : ''}`);
   let attemptDir = null;
   try {
@@ -339,29 +403,39 @@ async function installVersion(version, name, loader = 'Vanilla') {
     const entry = manifest.versions.find((item) => item.id === version.id);
     if (!entry) throw new Error('版本清单中不存在此版本');
     const instanceName = (name || `Minecraft ${version.id}`).trim().slice(0, 40);
-    let meta;
+    let meta = null;
+    let vanillaMeta = null;
+    let runtimeVersion;
     if (loader === 'Fabric') {
       updateTask(taskId, { detail: '获取 Fabric 加载器…', progress: 1 });
       const loaders = await fetchJson(`https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(version.id)}`);
       if (!loaders.length) throw new Error(`Fabric 暂不支持 Minecraft ${version.id}`);
       const selectedLoader = loaders.find((item) => item.loader.stable) || loaders[0];
       meta = await resolveVersion(`https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(version.id)}/${encodeURIComponent(selectedLoader.loader.version)}/profile/json`);
+      runtimeVersion = meta.id || version.id;
+    } else if (loader === 'Forge') {
+      if (!forgeId) throw new Error('请选择要安装的 Forge 版本');
+      updateTask(taskId, { detail: '读取原版版本信息…', progress: 1 });
+      vanillaMeta = await resolveVersion(entry.url);
+      runtimeVersion = `${version.id}-forge-${forgeId.slice(version.id.length + 1) || forgeId}`;
     } else {
       meta = await resolveVersion(entry.url);
+      runtimeVersion = meta.id || version.id;
     }
-    const runtimeVersion = meta.id || version.id;
     const id = `${runtimeVersion.replace(/[^a-zA-Z0-9._-]/g, '-')}-${Date.now().toString(36)}`;
     const gameDir = path.join(settings.gameDirectory, 'instances', id);
     attemptDir = gameDir;
     const versionDir = path.join(gameDir, 'versions', runtimeVersion);
     await fsp.mkdir(versionDir, { recursive: true });
     updateTask(taskId, { detail: '读取版本信息…', progress: 1 });
-    await fsp.writeFile(path.join(versionDir, `${runtimeVersion}.json`), JSON.stringify(meta, null, 2));
-    if (!meta.downloads?.client) throw new Error('此版本缺少客户端下载信息');
-    const assetIndexUrl = meta.assetIndex?.url;
+    if (loader !== 'Forge') {
+      await fsp.writeFile(path.join(versionDir, `${runtimeVersion}.json`), JSON.stringify(meta, null, 2));
+    }
+    const assetMeta = loader === 'Forge' ? vanillaMeta : meta;
+    const assetIndexUrl = assetMeta?.assetIndex?.url;
     if (!assetIndexUrl) throw new Error('此版本缺少资源索引');
-    const assetIndexPath = path.join(gameDir, 'assets', 'indexes', `${meta.assetIndex.id}.json`);
-    await downloadFile(assetIndexUrl, assetIndexPath, { signal: controllers.get(taskId)?.signal, expectedSize: meta.assetIndex.size });
+    const assetIndexPath = path.join(gameDir, 'assets', 'indexes', `${assetMeta.assetIndex.id}.json`);
+    await downloadFile(assetIndexUrl, assetIndexPath, { signal: controllers.get(taskId)?.signal, expectedSize: assetMeta.assetIndex.size });
     const assetIndex = JSON.parse(await fsp.readFile(assetIndexPath, 'utf8'));
     // 资源索引中多个路径可能共用同一哈希，按目标路径去重，避免并发写同一文件
     const downloads = [];
@@ -372,13 +446,83 @@ async function installVersion(version, name, loader = 'Vanilla') {
       downloads.push(item);
       return true;
     };
-    pushDownload({ ...meta.downloads.client, destination: path.join(versionDir, `${runtimeVersion}.jar`), label: '游戏客户端' });
     const nativeLibraries = [];
-    for (const library of meta.libraries || []) {
-      for (const file of libraryFiles(library, gameDir)) {
-        if (pushDownload({ ...file, label: path.basename(file.destination) }) && file.native) {
-          nativeLibraries.push(file.destination);
+    if (loader === 'Forge') {
+      updateTask(taskId, { detail: '下载 Forge 官方安装器…', progress: 2 });
+      const installerPath = path.join(CACHE_DIR, 'forge', `forge-${forgeId}-installer.jar`);
+      const installerUrls = [
+        `https://maven.minecraftforge.net/net/minecraftforge/forge/${forgeId}/forge-${forgeId}-installer.jar`,
+        `https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/${forgeId}/forge-${forgeId}-installer.jar`,
+      ];
+      let installerError = null;
+      for (const url of installerUrls) {
+        try {
+          await downloadFile(url, installerPath, {
+            signal: controllers.get(taskId)?.signal,
+            onProgress: (received, total) => updateTask(taskId, {
+              progress: total ? Math.min(9, 2 + (received / total) * 7) : 3,
+              detail: `下载 Forge 安装器 ${(received / 1048576).toFixed(1)} MB`,
+            }),
+          });
+          installerError = null;
+          break;
+        } catch (error) {
+          if (error.name === 'AbortError') throw error;
+          installerError = error;
         }
+      }
+      if (installerError) throw installerError;
+      const java = await detectJava();
+      if (!java.found) {
+        const error = new Error('安装 Forge 需要先安装 Java，请到“设置 → Java 环境”配置');
+        error.code = 'NO_JAVA';
+        throw error;
+      }
+      updateTask(taskId, { detail: '正在运行 Forge 官方安装器（下载运行库并打补丁，需要几分钟）…', progress: 10 });
+      await new Promise((resolve, reject) => {
+        execFile(java.path, ['-jar', installerPath, '--installClient', gameDir], {
+          timeout: 15 * 60 * 1000,
+          maxBuffer: 16 * 1024 * 1024,
+          windowsHide: true,
+        }, (error, stdout, stderr) => {
+          if (error) {
+            reject(new Error(`Forge 安装器运行失败：${String(stderr || stdout || error.message).trim().slice(-400)}`));
+            return;
+          }
+          resolve();
+        });
+      });
+      updateTask(taskId, { detail: '定位 Forge 版本文件…', progress: 20 });
+      const versionsRoot = path.join(gameDir, 'versions');
+      const versionDirs = await fsp.readdir(versionsRoot, { withFileTypes: true });
+      let found = null;
+      for (const dir of versionDirs) {
+        if (!dir.isDirectory()) continue;
+        const jsonPath = path.join(versionsRoot, dir.name, `${dir.name}.json`);
+        try {
+          const parsed = JSON.parse(await fsp.readFile(jsonPath, 'utf8'));
+          if (parsed.inheritsFrom === version.id && String(parsed.id || '').includes('forge')) {
+            const stat = await fsp.stat(jsonPath);
+            if (!found || stat.mtimeMs > found.mtime) found = { id: parsed.id, dir: dir.name, mtime: stat.mtimeMs };
+          }
+        } catch {}
+      }
+      if (!found) throw new Error('Forge 安装器未生成版本文件，请查看失败日志后重试');
+      runtimeVersion = found.id;
+      versionDir = path.join(versionsRoot, found.dir);
+    } else {
+      if (!meta.downloads?.client) throw new Error('此版本缺少客户端下载信息');
+      pushDownload({ ...meta.downloads.client, destination: path.join(versionDir, `${runtimeVersion}.jar`), label: '游戏客户端' });
+      for (const library of meta.libraries || []) {
+        for (const file of libraryFiles(library, gameDir)) {
+          if (pushDownload({ ...file, label: path.basename(file.destination) }) && file.native) {
+            nativeLibraries.push(file.destination);
+          }
+        }
+      }
+      if (meta.logging?.client?.file) {
+        const logFile = meta.logging.client.file;
+        pushDownload({ ...logFile, destination: path.join(gameDir, 'assets', 'log_configs', logFile.id), label: '日志配置' });
       }
     }
     for (const [assetPath, object] of Object.entries(assetIndex.objects || {})) {
@@ -389,10 +533,6 @@ async function installVersion(version, name, loader = 'Vanilla') {
         destination: path.join(gameDir, 'assets', 'objects', objectHash.slice(0, 2), objectHash),
         label: `游戏资源 ${assetPath.split('/').pop() || objectHash.slice(0, 8)}`,
       });
-    }
-    if (meta.logging?.client?.file) {
-      const logFile = meta.logging.client.file;
-      pushDownload({ ...logFile, destination: path.join(gameDir, 'assets', 'log_configs', logFile.id), label: '日志配置' });
     }
     await downloadQueue(downloads, taskId, 8);
     await fsp.mkdir(path.join(gameDir, 'mods'), { recursive: true });
@@ -408,7 +548,7 @@ async function installVersion(version, name, loader = 'Vanilla') {
       fsp.writeFile(INSTANCES_FILE, JSON.stringify(instances, null, 2)),
       fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2)),
     ]);
-    finishTask(taskId, 'completed', `安装完成 · ${downloads.length + 1} 个文件`);
+    finishTask(taskId, 'completed', `安装完成 · ${downloads.length} 个文件`);
     send('instances:update', { instances, selectedInstanceId: id });
     return { instance, taskId };
   } catch (error) {
@@ -417,7 +557,7 @@ async function installVersion(version, name, loader = 'Vanilla') {
       title: `安装 Minecraft ${version.id}${loader !== 'Vanilla' ? ` · ${loader}` : ''}`,
       item: failedItem,
       error,
-      extra: { 游戏版本: version.id, 加载器: loader },
+      extra: { 游戏版本: version.id, 加载器: loader, ...(loader === 'Forge' && forgeId ? { 'Forge 版本': forgeId } : {}) },
     });
     finishTask(taskId, error.name === 'AbortError' ? 'cancelled' : 'error', error.message);
     if (attemptDir) {
@@ -496,7 +636,15 @@ async function launchGame(instanceId) {
   }
   const runtimeVersion = instance.runtimeVersion || instance.version;
   const metaPath = path.join(instance.versionDir, `${runtimeVersion}.json`);
-  const meta = JSON.parse(await fsp.readFile(metaPath, 'utf8'));
+  let meta = JSON.parse(await fsp.readFile(metaPath, 'utf8'));
+  if (meta.inheritsFrom) {
+    // Forge 等基于原版的加载器：按 inheritsFrom 合并父版本（原版）配置
+    const parentId = String(meta.inheritsFrom);
+    if (/[\\/]+|\.\./.test(parentId)) throw new Error('版本继承信息异常');
+    const parentPath = path.join(instance.versionDir, '..', parentId, `${parentId}.json`);
+    const parent = JSON.parse(await fsp.readFile(parentPath, 'utf8'));
+    meta = mergeVersions(parent, meta);
+  }
   const gameDir = instance.gameDir;
   const nativesDir = path.join(instance.versionDir, 'natives');
   await fsp.mkdir(nativesDir, { recursive: true });
@@ -620,7 +768,8 @@ function registerIpc() {
     return settings;
   });
   ipcMain.handle('versions:list', (_event, refresh) => getVersionManifest(refresh));
-  ipcMain.handle('versions:install', (_event, version, name, loader) => installVersion(version, name, loader));
+  ipcMain.handle('versions:install', (_event, version, name, loader, forgeId) => installVersion(version, name, loader, forgeId));
+  ipcMain.handle('forge:list', (_event, mcVersion) => getForgeBuilds(mcVersion));
   ipcMain.handle('modrinth:search', (_event, options) => searchModrinth(options));
   ipcMain.handle('modrinth:versions', (_event, projectId, options) => projectVersions(projectId, options));
   ipcMain.handle('modrinth:download', (_event, resource) => downloadResource(resource));

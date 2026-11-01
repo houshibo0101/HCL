@@ -8,6 +8,12 @@
 - **v1.0.0（早期安装）没有更新模块**：请从 [Releases](https://github.com/houshibo0101/HCL/releases) 手动下载 v1.1.0 安装一次，之后的版本就全自动了
 - 应用内更新基于 GitHub Releases，需要能访问 GitHub；访问困难时随时可从 Releases 页手动下载安装包覆盖安装
 
+### Forge 安装失败怎么办？
+
+- 安装 Forge 需要先装好 Java（见上一条）；安装过程由 Forge 官方安装器完成，首次安装要下载运行库，几分钟属正常
+- 失败详情会写入失败日志（`D:\HCL\data\logs\error.log`，可在下载管理打开）
+- Forge 官方源连接失败时，启动器会自动切换 BMCLAPI 国内镜像重试
+
 ## 启动相关
 
 ### 提示“未检测到 Java”怎么办？

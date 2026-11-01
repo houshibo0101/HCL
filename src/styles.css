@@ -331,7 +331,7 @@ select:hover { border-color: #3c4b40; }
 .modal-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 14px 22px; border-top: 1px solid var(--border); background: #131a15; }
 .loader-field { margin-top: 16px; }
 .loader-field > span { display: block; color: #b6c2b9; font-size: 10px; margin-bottom: 8px; }
-.loader-options { display: grid; grid-template-columns: 1fr 1.35fr; gap: 8px; }
+.loader-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .loader-options > button { display: flex; align-items: center; gap: 9px; border: 1px solid var(--border-strong); border-radius: 8px; background: #111813; color: #8da294; padding: 11px; text-align: left; }
 .loader-options > button:hover { background: #19231c; }
 .loader-options > button.selected { border-color: rgba(123,218,140,.4); background: rgba(123,218,140,.06); color: var(--green); }
@@ -339,6 +339,11 @@ select:hover { border-color: #3c4b40; }
 .loader-options strong { color: #d1ded5; font-size: 10px; }
 .loader-options small { color: var(--muted); font-size: 8px; }
 .loader-options > button > svg:last-child { margin-left: auto; }
+.forge-picker { margin-top: 12px; }
+.forge-picker .field > span { display: block; color: #b6c2b9; font-size: 10px; margin-bottom: 7px; }
+.forge-picker select { width: 100%; }
+.forge-loading, .forge-error { display: flex; align-items: center; gap: 7px; background: #111813; border-radius: 7px; padding: 10px 12px; font-size: 10px; color: var(--muted); }
+.forge-error { color: #e49a9a; background: rgba(210, 95, 95, .08); }
 .install-summary { display: grid; grid-template-columns: 1fr 1.4fr; gap: 8px; margin-top: 17px; }
 .install-summary > div { display: flex; align-items: center; gap: 9px; border: 1px solid var(--border); border-radius: 8px; background: #111813; padding: 11px; color: #839a88; }
 .install-summary span { display: flex; flex-direction: column; color: var(--muted); font-size: 8px; gap: 4px; min-width: 0; }

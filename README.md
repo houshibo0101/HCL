@@ -9,7 +9,7 @@
 - **游戏版本下载** — 接入 Mojang 官方版本源，一键下载客户端、运行库和资源文件，支持正式版 / 快照 / Beta / Alpha
 - **Mod 下载** — 接入 [Modrinth](https://modrinth.com)，按游戏版本和加载器（Fabric / Forge / NeoForge / Quilt）筛选，直接下载到实例的 `mods` 文件夹
 - **光影下载** — Modrinth 光影资源浏览与下载，保存到实例的 `shaderpacks` 文件夹
-- **原版 / Fabric 实例** — 创建实例时可选原版或 Fabric 加载器，每个实例拥有独立的存档、Mod 与光影
+- **原版 / Fabric / Forge 实例** — 创建实例时可选原版、Fabric 或 Forge（Forge 走官方安装器，BMCLAPI 国内镜像兜底），每个实例拥有独立的存档、Mod 与光影
 - **下载管理** — 后台多任务下载，实时进度、取消、失败日志
 - **本地实例管理** — 实例切换 / 删除（移入回收站）、打开实例目录
 - **启动设置** — 离线玩家名、内存分配、Java 自动检测与自定义路径
@@ -58,6 +58,7 @@ npm run dist    # 打包 Windows 安装程序（输出到 release/）
 - 游戏版本：Mojang 官方 version manifest / piston-meta
 - Mod / 光影：Modrinth API
 - Fabric 加载器：FabricMC meta API
+- Forge 加载器：Forge 官方 Maven + BMCLAPI 镜像
 
 ## 免责声明
 
