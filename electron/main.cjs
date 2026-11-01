@@ -1318,8 +1318,7 @@ function registerIpc() {
     if (!app.isPackaged) return { status: 'dev' };
     if (process.platform !== 'win32') return { status: 'unsupported' };
     try {
-      const result = await autoUpdater.checkForUpdates();
-      return { status: result?.isUpdateAvailable ? 'available' : 'none', version: result?.updateInfo?.version || app.getVersion() };
+      return await checkForUpdatesWithFallback();
     } catch (error) {
       return { status: 'error', message: error.message };
     }
@@ -1348,6 +1347,52 @@ function canAutoUpdate() {
   return app.isPackaged && process.platform === 'win32' && settings.autoUpdate !== false;
 }
 
+// PCL2 式更新镜像链：官方 GitHub 源连不上时，经国内镜像检查版本并下载更新
+const GH_REPO = 'houshibo0101/HCL';
+const GH_MIRRORS = [
+  'https://gh-proxy.com/',
+  'https://ghfast.top/',
+  'https://ghproxy.net/',
+  'https://github.moeyy.xyz/',
+];
+
+function isNewerVersion(remote, local) {
+  const parse = (v) => String(v).replace(/^v/, '').split(/[.+-]/).map((n) => parseInt(n, 10) || 0);
+  const a = parse(remote);
+  const b = parse(local);
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+  }
+  return false;
+}
+
+async function findMirrorUpdate() {
+  for (const prefix of GH_MIRRORS) {
+    try {
+      const res = await fetch(`${prefix}https://api.github.com/repos/${GH_REPO}/releases/latest`, { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(15000) });
+      if (!res.ok) continue;
+      const info = await res.json();
+      const tag = String(info.tag_name || '').replace(/^v/, '');
+      if (tag && isNewerVersion(tag, app.getVersion())) return { prefix, tag };
+    } catch { /* 该镜像不通，尝试下一个 */ }
+  }
+  return null;
+}
+
+async function checkForUpdatesWithFallback() {
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { status: result?.isUpdateAvailable ? 'available' : 'none', version: result?.updateInfo?.version || app.getVersion() };
+  } catch (error) {
+    // 官方源不通 → 镜像链兜底：镜像代理的 latest/download 恒指向最新版
+    const mirror = await findMirrorUpdate();
+    if (!mirror) throw error;
+    autoUpdater.setFeedURL({ provider: 'generic', url: `${mirror.prefix}https://github.com/${GH_REPO}/releases/latest/download/` });
+    const result = await autoUpdater.checkForUpdates();
+    return { status: result?.isUpdateAvailable ? 'available' : 'none', version: result?.updateInfo?.version || app.getVersion(), via: 'mirror' };
+  }
+}
+
 function scheduleNextUpdateCheck(delay) {
   if (updateTimer) clearTimeout(updateTimer);
   updateTimer = null;
@@ -1364,7 +1409,7 @@ async function runAutoUpdateCheck() {
   if (updateReadyVersion) { scheduleNextUpdateCheck(UPDATE_CHECK_INTERVAL); return; } // 已就绪等重启，无需再查
   lastUpdateCheckAt = Date.now();
   try {
-    await autoUpdater.checkForUpdates();
+    await checkForUpdatesWithFallback();
     updateRetryAttempts = 0;
     scheduleNextUpdateCheck(UPDATE_CHECK_INTERVAL);
   } catch {
