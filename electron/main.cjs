@@ -145,7 +145,15 @@ async function fileExists(file, expectedSize) {
   }
 }
 
-async function downloadFile(url, destination, { signal, onProgress, expectedSize = 0 } = {}) {
+function mirrorLibUrl(url) {
+  // BMCLAPI 对 Fabric Maven 与 Mojang libraries 的镜像
+  return String(url || '')
+    .replace('https://maven.fabricmc.net', 'https://bmclapi2.bangbang93.com/maven')
+    .replace('https://libraries.minecraft.net', 'https://bmclapi2.bangbang93.com/maven')
+    .replace('https://meta.fabricmc.net', 'https://bmclapi2.bangbang93.com/fabric-meta');
+}
+
+async function downloadSingle(url, destination, { signal, onProgress, expectedSize = 0 } = {}) {
   if (await fileExists(destination, expectedSize)) {
     const stat = await fsp.stat(destination);
     onProgress?.(stat.size, stat.size);
@@ -193,6 +201,21 @@ async function downloadFile(url, destination, { signal, onProgress, expectedSize
   return { path: destination, size: received, skipped: false };
 }
 
+// 支持 url 或 urls（数组依次尝试）：官方源失败自动切换 BMCLAPI 镜像
+async function downloadFile(urlOrUrls, destination, options = {}) {
+  const urls = Array.isArray(urlOrUrls) ? urlOrUrls : [urlOrUrls];
+  let lastError;
+  for (const url of urls) {
+    try {
+      return await downloadSingle(url, destination, options);
+    } catch (error) {
+      if (error.name === 'AbortError') throw error;
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 async function downloadQueue(rawItems, taskId, concurrency = 6) {
   // 防御性去重：同一目标路径只下载一次
   const seen = new Set();
@@ -215,7 +238,7 @@ async function downloadQueue(rawItems, taskId, concurrency = 6) {
       const item = items[index];
       try {
         updateTask(taskId, { detail: item.label || path.basename(item.destination) });
-        await downloadFile(item.url, item.destination, {
+        await downloadFile(item.urls || item.url, item.destination, {
           signal: controller?.signal,
           expectedSize: item.size,
           onProgress: (received) => {
@@ -454,10 +477,24 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
     let runtimeVersion;
     if (loader === 'Fabric') {
       updateTask(taskId, { detail: '获取 Fabric 加载器…', progress: 1 });
-      const loaders = await fetchJson(`https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(version.id)}`);
+      const fabricBase = `https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(version.id)}`;
+      const fabricBaseMirror = `https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/${encodeURIComponent(version.id)}`;
+      let loaders;
+      try {
+        loaders = await fetchJson(fabricBase);
+      } catch (error) {
+        if (error.name === 'AbortError') throw error;
+        loaders = await fetchJson(fabricBaseMirror);
+      }
       if (!loaders.length) throw new Error(`Fabric 暂不支持 Minecraft ${version.id}`);
       const selectedLoader = loaders.find((item) => item.loader.stable) || loaders[0];
-      meta = await resolveVersion(`https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(version.id)}/${encodeURIComponent(selectedLoader.loader.version)}/profile/json`);
+      const profileUrl = `${fabricBase}/${encodeURIComponent(selectedLoader.loader.version)}/profile/json`;
+      try {
+        meta = await resolveVersion(profileUrl);
+      } catch (error) {
+        if (error.name === 'AbortError') throw error;
+        meta = await resolveVersion(profileUrl.replace('https://meta.fabricmc.net', 'https://bmclapi2.bangbang93.com/fabric-meta'));
+      }
       runtimeVersion = meta.id || version.id;
     } else if (loader === 'Forge') {
       if (!forgeId) throw new Error('请选择要安装的 Forge 版本');
@@ -563,7 +600,8 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
       pushDownload({ ...meta.downloads.client, destination: path.join(versionDir, `${runtimeVersion}.jar`), label: '游戏客户端' });
       for (const library of meta.libraries || []) {
         for (const file of libraryFiles(library, gameDir)) {
-          if (pushDownload({ ...file, label: path.basename(file.destination) }) && file.native) {
+          const libUrls = [...new Set([file.url, mirrorLibUrl(file.url)].filter(Boolean))];
+          if (pushDownload({ ...file, url: file.url, urls: libUrls, label: path.basename(file.destination) }) && file.native) {
             nativeLibraries.push(file.destination);
           }
         }
