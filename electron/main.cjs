@@ -246,7 +246,7 @@ async function downloadQueue(rawItems, taskId, concurrency = 6) {
 
 function currentOs() {
   if (process.platform === 'win32') return 'windows';
-  if (process.platform === 'darwin') return 'osx';
+  if (process.platform === 'darwin') return 'macos';
   return 'linux';
 }
 
@@ -285,7 +285,8 @@ function libraryFiles(library, gameDir) {
     const relative = `${group.replaceAll('.', '/')}/${name}/${version}/${name}-${version}.jar`;
     result.push({ url: `${library.url.replace(/\/$/, '')}/${relative}`, path: relative, size: 0, destination: path.join(base, relative), native: false });
   }
-  const nativeName = library.natives?.[currentOs()];
+  const nativeKey = currentOs() === 'macos' && library.natives?.osx ? 'osx' : currentOs();
+  const nativeName = library.natives?.[nativeKey];
   if (nativeName) {
     const classifier = nativeName.replace('${arch}', nativeSuffix());
     const native = library.downloads?.classifiers?.[classifier];
@@ -617,28 +618,42 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
 }
 
 async function detectJava() {
+  const executableName = process.platform === 'win32' ? 'java.exe' : 'java';
   const candidates = [];
   if (settings.javaPath) candidates.push(settings.javaPath);
-  if (process.env.JAVA_HOME) candidates.push(path.join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'java.exe' : 'java'));
-  const roots = process.platform === 'win32' ? [
-    'C:\\Program Files\\Java', 'C:\\Program Files\\Eclipse Adoptium', 'C:\\Program Files\\Microsoft',
-    'C:\\Program Files\\Amazon Corretto', 'C:\\Program Files\\BellSoft', 'D:\\Java', 'D:\\Program Files\\Java',
-    'D:\\Program Files\\Eclipse Adoptium',
-  ] : ['/usr/bin'];
-  for (const root of roots) {
-    try {
-      if (root === '/usr/bin') {
-        candidates.push('/usr/bin/java');
-        continue;
-      }
-      const entries = await fsp.readdir(root, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) candidates.push(path.join(root, entry.name, 'bin', 'java.exe'));
-      }
-    } catch {}
+  if (process.env.JAVA_HOME) candidates.push(path.join(process.env.JAVA_HOME, 'bin', executableName));
+  if (process.platform === 'darwin') {
+    const macRoots = ['/Library/Java/JavaVirtualMachines', path.join(os.homedir(), 'Library', 'Java', 'JavaVirtualMachines')];
+    for (const root of macRoots) {
+      try {
+        const entries = await fsp.readdir(root, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory()) candidates.push(path.join(root, entry.name, 'Contents', 'Home', 'bin', 'java'));
+        }
+      } catch {}
+    }
+    candidates.push('/usr/bin/java');
+  } else {
+    const roots = process.platform === 'win32' ? [
+      'C:\\Program Files\\Java', 'C:\\Program Files\\Eclipse Adoptium', 'C:\\Program Files\\Microsoft',
+      'C:\\Program Files\\Amazon Corretto', 'C:\\Program Files\\BellSoft', 'D:\\Java', 'D:\\Program Files\\Java',
+      'D:\\Program Files\\Eclipse Adoptium',
+    ] : ['/usr/bin'];
+    for (const root of roots) {
+      try {
+        if (root === '/usr/bin') {
+          candidates.push('/usr/bin/java');
+          continue;
+        }
+        const entries = await fsp.readdir(root, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory()) candidates.push(path.join(root, entry.name, 'bin', 'java.exe'));
+        }
+      } catch {}
+    }
+    if (process.platform === 'win32') candidates.push('java.exe');
+    else candidates.push('/usr/bin/java');
   }
-  if (process.platform === 'win32') candidates.push('java.exe');
-  else candidates.push('/usr/bin/java');
   for (const candidate of [...new Set(candidates)]) {
     try {
       const version = await new Promise((resolve, reject) => {
@@ -830,7 +845,7 @@ async function downloadResource(resource) {
 }
 
 function registerIpc() {
-  ipcMain.handle('app:get-state', () => ({ settings, instances, tasks: [...tasks.values()], dataRoot: DATA_ROOT, appVersion: app.getVersion(), running: [...gameProcesses.keys()] }));
+  ipcMain.handle('app:get-state', () => ({ settings, instances, tasks: [...tasks.values()], dataRoot: DATA_ROOT, appVersion: app.getVersion(), platform: process.platform, running: [...gameProcesses.keys()] }));
   ipcMain.handle('settings:save', async (_event, next) => {
     settings = { ...settings, ...next };
     if (!settings.username.trim()) settings.username = 'Player';
@@ -896,6 +911,7 @@ function registerIpc() {
   });
   ipcMain.handle('app:check-updates', async () => {
     if (!app.isPackaged) return { status: 'dev' };
+    if (process.platform !== 'win32') return { status: 'unsupported' };
     try {
       const result = await autoUpdater.checkForUpdates();
       return { status: result?.isUpdateAvailable ? 'available' : 'none', version: result?.updateInfo?.version || app.getVersion() };
@@ -904,7 +920,7 @@ function registerIpc() {
     }
   });
   ipcMain.handle('app:install-update', () => {
-    if (!app.isPackaged) return { status: 'dev' };
+    if (!app.isPackaged || process.platform !== 'win32') return { status: 'dev' };
     autoUpdater.quitAndInstall(false, true);
     return { status: 'installing' };
   });
@@ -954,7 +970,8 @@ function createWindow() {
     height: 900,
     minWidth: 1100,
     minHeight: 700,
-    frame: false,
+    frame: process.platform !== 'darwin',
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 12 } } : {}),
     backgroundColor: THEME_BACKGROUNDS[settings.theme] || THEME_BACKGROUNDS.green,
     icon: path.join(__dirname, isDev ? '../public/hcl.png' : '../dist/hcl.png'),
     show: false,
@@ -992,7 +1009,7 @@ app.whenReady().then(async () => {
   registerIpc();
   setupAutoUpdater();
   createWindow();
-  if (app.isPackaged) {
+  if (app.isPackaged && process.platform === 'win32') {
     setTimeout(() => {
       autoUpdater.checkForUpdates().catch(() => {});
     }, 6000);

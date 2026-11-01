@@ -1,6 +1,6 @@
 {
   "name": "hcl-launcher",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "private": true,
   "author": "HCL",
   "description": "HCL - a clean Minecraft launcher with version, mod and shader downloads",
@@ -45,6 +45,12 @@
     "win": {
       "target": "nsis",
       "icon": "public/hcl.ico"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "icon": "public/hcl-mac.png",
+      "category": "public.app-category.games",
+      "identity": null
     },
     "nsis": {
       "oneClick": false,

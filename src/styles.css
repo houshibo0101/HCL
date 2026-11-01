@@ -95,6 +95,8 @@ input::placeholder { color: #68766c; }
 .window-title span { color: #a9b5ac; font-weight: 600; }
 .window-title i { width: 1px; height: 10px; background: var(--border-strong); }
 .window-controls { margin-left: auto; align-self: stretch; display: flex; }
+.platform-mac .window-controls { display: none; }
+.platform-mac .titlebar-brand { padding-left: 76px; }
 .window-controls button { width: 46px; border: 0; background: transparent; display: grid; place-items: center; color: #95a298; transition: .15s; }
 .window-controls button:hover { background: #253028; color: white; }
 .window-controls .window-close:hover { background: #c64343; }
