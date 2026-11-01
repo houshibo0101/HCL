@@ -970,7 +970,7 @@ function createWindow() {
     height: 900,
     minWidth: 1100,
     minHeight: 700,
-    frame: process.platform !== 'darwin',
+    frame: process.platform === 'darwin',
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 12 } } : {}),
     backgroundColor: THEME_BACKGROUNDS[settings.theme] || THEME_BACKGROUNDS.green,
     icon: path.join(__dirname, isDev ? '../public/hcl.png' : '../dist/hcl.png'),
