@@ -1450,6 +1450,21 @@ function createWindow() {
     // 用户每次切回窗口都会顺手查一次更新（限流 10 分钟），不依赖固定周期
     if (Date.now() - lastUpdateCheckAt > UPDATE_FOCUS_GAP) runAutoUpdateCheck().catch(() => {});
   });
+  // 渲染层错误捕获：界面异常时写入 error.log，便于远程诊断
+  const reportRendererIssue = (message) => {
+    fsp.mkdir(path.dirname(ERROR_LOG_FILE), { recursive: true })
+      .then(() => fsp.appendFile(ERROR_LOG_FILE, `[${new Date().toLocaleString('zh-CN')}] ${message}\n`, 'utf8'))
+      .catch(() => {});
+  };
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (level >= 3) reportRendererIssue(`[渲染层] ${message} (${sourceId}:${line})`);
+  });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    reportRendererIssue(`[渲染进程退出] ${details.reason}`);
+  });
+  mainWindow.webContents.on('unresponsive', () => {
+    reportRendererIssue('[渲染进程无响应]');
+  });
 }
 
 app.whenReady().then(async () => {

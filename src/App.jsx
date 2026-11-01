@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, flushSync } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle, ArrowRight, Blocks, Box, CalendarDays, Check, CheckCircle2, Coffee,
   ChevronDown, ChevronRight, Clock3, Download, ExternalLink, FolderOpen,
@@ -9,16 +9,7 @@ import {
 import { translateQuery, lookupProject } from './modDictionary';
 
 let vtRunning = false;
-const runViewTransition = (update) => {
-  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  if (typeof document.startViewTransition !== 'function' || reduce || vtRunning) { update(); return; }
-  vtRunning = true;
-  const vt = document.startViewTransition(update);
-  const done = () => { vtRunning = false; };
-  if (vt.finished?.then) vt.finished.then(done, done);
-  // 兜底：任何情况下不让过渡层卡住页面（::view-transition 会拦截整窗点击）
-  setTimeout(() => { try { vt.skipTransition(); } catch {} }, 450);
-};
+/* View Transitions 已移除（v1.6.6/1.6.7 曾导致界面卡死）：页面切换回退为即时渲染 + CSS 入场动画 */
 
 const THEMES = [
   { id: 'green', name: '翡翠绿', c1: '#83df90', c2: '#50b967' },
@@ -490,22 +481,13 @@ export default function App() {
   const prevThemeRef = useRef(null);
   useEffect(() => {
     const next = state.settings.theme || 'green';
-    const prev = prevThemeRef.current;
     prevThemeRef.current = next;
-    if (prev === null || prev === next) {
-      // 首次应用/未变化：直接设置，绝不播过渡（启动时窗口可能未显示，过渡会卡住整个界面）
-      document.documentElement.dataset.theme = next;
-      return;
-    }
-    runViewTransition(() => { document.documentElement.dataset.theme = next; });
+    document.documentElement.dataset.theme = next;
   }, [state.settings.theme]);
   const selected = state.instances.find((item) => item.id === state.settings.selectedInstanceId) || state.instances[0];
   const currentAccount = accounts.find((item) => item.id === currentAccountId) || accounts[0] || null;
   const activeDownloads = state.tasks.filter((task) => task.status === 'downloading').length;
-  const navigate = (next) => {
-    if (next === page) return;
-    runViewTransition(() => flushSync(() => setPage(next)));
-  };
+  const navigate = (next) => setPage(next);
   const selectInstance = async (id) => {
     await window.hcl.selectInstance(id);
     setState((old) => ({ ...old, settings: { ...old.settings, selectedInstanceId: id } }));
