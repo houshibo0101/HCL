@@ -1287,7 +1287,8 @@ function registerIpc() {
     const instance = instances.find((item) => item.id === id);
     let target = kind === 'root' ? DATA_ROOT : settings.gameDirectory;
     if (instance) {
-      target = kind === 'mods' || kind === 'shaderpacks' ? path.join(instance.gameDir, kind) : instance.gameDir;
+      const sub = { mods: 'mods', shaderpacks: 'shaderpacks', saves: 'saves' }[kind];
+      target = sub ? path.join(instance.gameDir, sub) : instance.gameDir;
     }
     await fsp.mkdir(target, { recursive: true });
     return shell.openPath(target);
