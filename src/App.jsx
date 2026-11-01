@@ -110,14 +110,14 @@ function HomePage({ instances, selected, settings, tasks, onLaunch, launching, r
       </section>
       <aside className="home-aside">
         <section className="side-card profile-card"><div className="side-card-title"><h3>玩家档案</h3><UserRound size={17} /></div><div className="player-row"><div className="player-avatar"><span>{settings.username.slice(0, 1).toUpperCase()}</span><i /></div><div><strong>{settings.username}</strong><span>离线玩家</span></div><span className="local-badge">本地</span></div><div className="profile-stats"><div><strong>{instances.length}</strong><span>游戏实例</span></div><div><strong>{settings.memory / 1024} GB</strong><span>分配内存</span></div></div></section>
-        <section className="side-card status-card"><div className="side-card-title"><h3>运行状态</h3><span className={`status-pill ${java?.found ? '' : 'warning'}`}>{java?.found ? '就绪' : '需配置'}</span></div><div className="status-line"><span><Zap size={15} />Java 环境</span><strong>{java?.found ? `Java ${java.version.split('_')[0]}` : '未检测到'}</strong></div><div className="status-line"><span><Download size={15} />活动下载</span><strong>{activeTasks.length} 个任务</strong></div><div className="status-line"><span><HardDrive size={15} />游戏目录</span><button title="打开游戏目录" onClick={onOpenFolder}>D 盘 <FolderOpen size={13} /></button></div></section>
+        <section className="side-card status-card"><div className="side-card-title"><h3>运行状态</h3><span className={`status-pill ${java?.found ? '' : 'warning'}`}>{java?.found ? '就绪' : '需配置'}</span></div><div className="status-line"><span><Zap size={15} />Java 环境</span><strong>{java?.found ? `Java ${java.version.split('_')[0]}` : '未检测到'}</strong></div><div className="status-line"><span><Download size={15} />活动下载</span><strong>{activeTasks.length} 个任务</strong></div><div className="status-line"><span><HardDrive size={15} />游戏目录</span><button title="打开游戏目录" onClick={onOpenFolder}>{settings.gameDirectory?.slice(0, 1) || 'D'} 盘 <FolderOpen size={13} /></button></div></section>
         <div className="tip-card"><Leaf size={18} /><p>小提示：Mod 与光影需要对应的加载器才能生效，下载时注意游戏版本。</p></div>
       </aside>
     </div>
   </div>;
 }
 
-function VersionsPage({ installed, onInstall, installing }) {
+function VersionsPage({ installed, onInstall, installing, settings }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -153,7 +153,7 @@ function VersionsPage({ installed, onInstall, installing }) {
       {filtered.length > limit && <button className="load-more" onClick={() => setLimit(limit + 30)}>显示更多版本<ChevronDown size={16} /></button>}
     </>}
     {installTarget && <Modal title="创建游戏实例" subtitle={`Minecraft ${installTarget.id} · ${TYPE_LABELS[installTarget.type]}`} onClose={() => !installing && setInstallTarget(null)}>
-      <div className="modal-body"><label className="field"><span>实例名称</span><input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} autoFocus /></label><div className="loader-field"><span>运行加载器</span><div className="loader-options"><button className={loader === 'Vanilla' ? 'selected' : ''} onClick={() => setLoader('Vanilla')}><Box size={18} /><div><strong>原版</strong><small>纯净的 Minecraft 体验</small></div>{loader === 'Vanilla' && <Check size={14} />}</button><button className={loader === 'Fabric' ? 'selected' : ''} onClick={() => setLoader('Fabric')}><Layers3 size={18} /><div><strong>Fabric</strong><small>轻量加载器，支持 Fabric Mod 与 Iris</small></div>{loader === 'Fabric' && <Check size={14} />}</button></div></div><div className="install-summary"><div><Box size={19} /><span>游戏版本<strong>{installTarget.id} · {loader}</strong></span></div><div><HardDrive size={19} /><span>安装位置<strong>D:\HCL\data\games</strong></span></div></div><p className="modal-hint"><Info size={14} />客户端、资源文件和运行库将一并下载，所需空间因版本而异。</p></div>
+      <div className="modal-body"><label className="field"><span>实例名称</span><input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} autoFocus /></label><div className="loader-field"><span>运行加载器</span><div className="loader-options"><button className={loader === 'Vanilla' ? 'selected' : ''} onClick={() => setLoader('Vanilla')}><Box size={18} /><div><strong>原版</strong><small>纯净的 Minecraft 体验</small></div>{loader === 'Vanilla' && <Check size={14} />}</button><button className={loader === 'Fabric' ? 'selected' : ''} onClick={() => setLoader('Fabric')}><Layers3 size={18} /><div><strong>Fabric</strong><small>轻量加载器，支持 Fabric Mod 与 Iris</small></div>{loader === 'Fabric' && <Check size={14} />}</button></div></div><div className="install-summary"><div><Box size={19} /><span>游戏版本<strong>{installTarget.id} · {loader}</strong></span></div><div><HardDrive size={19} /><span>安装位置<strong>{settings?.gameDirectory || 'D:\\HCL\\data\\games'}</strong></span></div></div><p className="modal-hint"><Info size={14} />客户端、资源文件和运行库将一并下载，所需空间因版本而异。</p></div>
       <footer className="modal-footer"><button className="button ghost" onClick={() => setInstallTarget(null)} disabled={installing}>取消</button><button className="button primary" disabled={!name.trim() || installing} onClick={() => { onInstall(installTarget, name, loader).catch(() => {}); setInstallTarget(null); }}>{installing ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{installing ? '正在创建…' : '开始安装'}</button></footer>
     </Modal>}
   </div>;
@@ -241,12 +241,12 @@ function DownloadsPage({ tasks, onCancel, onClear, onOpenLog }) {
   const active = sorted.filter((task) => task.status === 'downloading');
   return <div className="page downloads-page">
     <div className="download-summary"><div className="download-summary-icon"><Download size={25} /></div><div><strong>{active.length ? `${active.length} 个任务正在下载` : '下载队列很安静'}</strong><p>{active.length ? '可以离开此页面，下载会在后台继续。' : '安装游戏或下载 Mod、光影后，任务会显示在这里。'}</p></div>{sorted.length > 0 && <button className="button ghost small" onClick={onClear}>清除已完成</button>}</div>
-    <div className="download-list">{sorted.map((task) => <article className="download-task" key={task.id}><div className={`task-icon ${task.kind}`}>{task.kind === 'game' ? <Box size={23} /> : task.kind === 'shader' ? <Sparkles size={23} /> : <Package size={23} />}</div><div className="task-body"><div className="task-heading"><div><strong>{task.title}</strong><span>{task.detail}</span></div><span className={`task-status ${task.status}`}>{task.status === 'downloading' ? `${Math.floor(task.progress)}%` : task.status === 'completed' ? <><CheckCircle2 size={15} />已完成</> : task.status === 'cancelled' ? '已取消' : <><XCircle size={15} />失败</>}</span></div><div className="progress-track"><i className={task.status} style={{ width: `${task.progress}%` }} /></div><div className="task-meta"><span>{task.total ? `${formatBytes(task.received)} / ${formatBytes(task.total)}` : task.kind === 'game' ? '正在准备游戏文件' : '正在连接资源服务器'}</span><time>{new Date(task.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></div></div>{task.status === 'downloading' && <IconButton title="取消下载" onClick={() => onCancel(task.id)}><X size={17} /></IconButton>}
-{task.status === 'error' && <button className="text-button log-open" onClick={onOpenLog}><FileText size={14} />失败日志</button>}</article>)}{!sorted.length && <EmptyState icon={Download} title="还没有下载任务" text="去游戏版本、Mod 或光影页面找点喜欢的内容吧。" />}</div>
+    <div className="download-list">{sorted.map((task) => { const TaskIcon = { game: Box, shader: Sparkles, update: RefreshCw }[task.kind] || Package; return <article className="download-task" key={task.id}><div className={`task-icon ${task.kind}`}><TaskIcon size={23} /></div><div className="task-body"><div className="task-heading"><div><strong>{task.title}</strong><span>{task.detail}</span></div><span className={`task-status ${task.status}`}>{task.status === 'downloading' ? `${Math.floor(task.progress)}%` : task.status === 'completed' ? <><CheckCircle2 size={15} />已完成</> : task.status === 'cancelled' ? '已取消' : <><XCircle size={15} />失败</>}</span></div><div className="progress-track"><i className={task.status} style={{ width: `${task.progress}%` }} /></div><div className="task-meta"><span>{task.total ? `${formatBytes(task.received)} / ${formatBytes(task.total)}` : task.kind === 'game' ? '正在准备游戏文件' : '正在连接资源服务器'}</span><time>{new Date(task.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></div></div>{task.status === 'downloading' && task.kind !== 'update' && <IconButton title="取消下载" onClick={() => onCancel(task.id)}><X size={17} /></IconButton>}
+{task.status === 'error' && <button className="text-button log-open" onClick={onOpenLog}><FileText size={14} />失败日志</button>}</article>; })}{!sorted.length && <EmptyState icon={Download} title="还没有下载任务" text="去游戏版本、Mod 或光影页面找点喜欢的内容吧。" />}</div>
   </div>;
 }
 
-function SettingsPage({ settings, dataRoot, onSave, onChooseJava, onChooseDirectory, onDetectJava, java, setJava, onOpenRoot }) {
+function SettingsPage({ settings, dataRoot, appVersion, onCheckUpdates, onSave, onChooseJava, onChooseDirectory, onDetectJava, java, setJava, onOpenRoot }) {
   const [form, setForm] = useState(settings);
   const [saving, setSaving] = useState(false);
   useEffect(() => setForm(settings), [settings]);
@@ -258,7 +258,7 @@ function SettingsPage({ settings, dataRoot, onSave, onChooseJava, onChooseDirect
       <section className="settings-section"><div className="settings-title"><Zap size={19} /><div><h2>Java 环境</h2><p>启动 Minecraft 所需的 Java 运行环境</p></div></div><div className="java-status"><div className={`java-status-icon ${java?.found ? 'ok' : ''}`}>{java?.found ? <Check size={20} /> : <AlertCircle size={20} />}</div><div><strong>{java?.found ? `已检测到 Java ${java.version}` : '未检测到可用的 Java'}</strong><span>{java?.found ? java.path : '1.20.5 及以上建议 Java 21，较新版本建议 Java 17'}</span></div><div className="java-actions">{!java?.found && <a className="button secondary small" href="https://adoptium.net/temurin/releases/?version=21" target="_blank" rel="noreferrer"><Download size={14} />获取 Java 21</a>}<button className="button secondary small" onClick={async () => { setJava(null); setJava(await onDetectJava()); }}><RefreshCw size={14} />重新检测</button></div></div><label className="field horizontal"><span>Java 路径</span><div className="path-input"><input value={form.javaPath} onChange={(e) => update('javaPath', e.target.value)} placeholder="留空以自动检测 java.exe" /><button className="button secondary small" onClick={async () => { const file = await onChooseJava(); if (file) update('javaPath', file); }}>浏览</button></div></label><div className="field horizontal"><span>游戏内存</span><div className="memory-control"><div><MemoryStick size={16} /><input type="range" min="1024" max="16384" step="512" value={form.memory} onChange={(e) => update('memory', Number(e.target.value))} /><strong>{(form.memory / 1024).toFixed(1)} GB</strong></div><small>通常分配 4 GB 即可；大型 Mod 整合包可适当增加</small></div></div></section>
       <section className="settings-section"><div className="settings-title"><HardDrive size={19} /><div><h2>存储位置</h2><p>游戏实例、Mod 和光影的保存目录</p></div></div><label className="field horizontal"><span>游戏目录</span><div className="path-input"><input value={form.gameDirectory} onChange={(e) => update('gameDirectory', e.target.value)} /><button className="button secondary small" onClick={async () => { const folder = await onChooseDirectory(); if (folder) update('gameDirectory', folder); }}>浏览</button></div></label><div className="storage-note"><Info size={15} /><span>配置与缓存目录：{dataRoot}</span><button onClick={onOpenRoot}><FolderOpen size={14} />打开</button></div></section>
       <button className="button primary save-settings" disabled={saving} onClick={save}>{saving ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}保存设置</button>
-    </div><aside className="settings-aside"><div className="about-card"><Logo /><div className="about-version"><span>版本 1.0.0</span><span>Windows</span></div><p>一个简单、清爽的 Minecraft 启动器。专注于游戏与社区内容，不做多余的事情。</p><div className="about-features"><span><Check size={14} />官方游戏版本</span><span><Check size={14} />Modrinth 资源</span><span><Check size={14} />本地实例管理</span></div></div><div className="legal-note">Minecraft 是 Mojang Synergies AB 的商标。HCL 不是官方 Minecraft 产品，与 Mojang 或 Microsoft 无隶属关系。</div></aside></div>
+    </div><aside className="settings-aside"><div className="about-card"><Logo /><div className="about-version"><span>版本 {appVersion || '1.1.0'}</span><span>Windows</span><button className="check-update" onClick={onCheckUpdates}><RefreshCw size={12} />检查更新</button></div><p>一个简单、清爽的 Minecraft 启动器。专注于游戏与社区内容，不做多余的事情。</p><div className="about-features"><span><Check size={14} />官方游戏版本</span><span><Check size={14} />Modrinth 资源</span><span><Check size={14} />本地实例管理</span></div></div><div className="legal-note">Minecraft 是 Mojang Synergies AB 的商标。HCL 不是官方 Minecraft 产品，与 Mojang 或 Microsoft 无隶属关系。</div></aside></div>
   </div>;
 }
 
@@ -268,7 +268,7 @@ function InstanceModal({ instances, selectedId, onClose, onSelect, onDelete, onO
 
 export default function App() {
   const [page, setPage] = useState('home');
-  const [state, setState] = useState({ settings: { username: 'Player', memory: 4096 }, instances: [], tasks: [], dataRoot: 'D:\\HCL\\data' });
+  const [state, setState] = useState({ settings: { username: 'Player', memory: 4096 }, instances: [], tasks: [], dataRoot: 'D:\\HCL\\data', appVersion: '' });
   const [ready, setReady] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [instanceModal, setInstanceModal] = useState(false);
@@ -288,7 +288,10 @@ export default function App() {
     const offLog = window.hcl.onGameLog((data) => {
       if (data.exited) { setRunning((old) => old.filter((id) => id !== data.instanceId)); toast('游戏进程已退出', 'info'); }
     });
-    return () => { offTask(); offInstances(); offLog(); };
+    const offUpdate = window.hcl.listen('app:update', (data) => {
+      if (data?.status === 'ready') toast(`HCL v${data.version} 已下载完成，重启后自动安装`, 'info');
+    });
+    return () => { offTask(); offInstances(); offLog(); offUpdate(); };
   }, [toast]);
   const selected = state.instances.find((item) => item.id === state.settings.selectedInstanceId) || state.instances[0];
   const activeDownloads = state.tasks.filter((task) => task.status === 'downloading').length;
@@ -322,6 +325,15 @@ export default function App() {
       if (e.message?.includes('Java')) setPage('settings');
     } finally { setLaunching(false); }
   };
+  const checkUpdates = async () => {
+    try {
+      const result = await window.hcl.checkForUpdates();
+      if (result?.status === 'none') toast('当前已是最新版本');
+      else if (result?.status === 'dev') toast('开发模式下暂不支持应用内更新', 'info');
+      else if (result?.status === 'available') toast(`发现新版本 v${result.version}，正在后台下载`);
+      else if (result?.status === 'error') toast(`检查更新失败：${result.message}`, 'error');
+    } catch (e) { toast(e.message || '检查更新失败', 'error'); }
+  };
   const saveSettings = async (form) => {
     const settings = await window.hcl.saveSettings(form);
     setState((old) => ({ ...old, settings }));
@@ -335,13 +347,13 @@ export default function App() {
   if (!ready) return <div className="app-loading"><Logo /><LoaderCircle className="spin" size={22} /><span>正在准备你的世界…</span></div>;
   return <div className="app-shell">
     <header className="titlebar"><div className="titlebar-brand"><Logo compact /></div><div className="window-title"><span>HCL</span><i />{PAGE_META[page][0]}</div><div className="window-controls"><button onClick={() => window.hcl.windowMinimize()}><Minus size={16} /></button><button onClick={() => window.hcl.windowMaximize()}><Square size={13} /></button><button className="window-close" onClick={() => window.hcl.windowClose()}><X size={17} /></button></div></header>
-    <aside className="sidebar"><div className="sidebar-brand"><Logo /></div><nav className="main-nav"><span className="nav-label">启动器</span>{NAV_ITEMS.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => navigate(id)}><Icon size={19} /><span>{label}</span>{id === 'downloads' && activeDownloads > 0 && <b>{activeDownloads}</b>}{page === id && <i />}</button>)}</nav><div className="sidebar-bottom"><button className={`settings-nav ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={19} /><span>设置</span></button><button className="sidebar-player" onClick={() => navigate('settings')}><div className="mini-avatar">{state.settings.username.slice(0, 1).toUpperCase()}<i /></div><div><strong>{state.settings.username}</strong><span>离线模式</span></div><ChevronRight size={15} /></button><div className="sidebar-version">HCL v1.0.0 <span>•</span> 为热爱而创造</div></div></aside>
+    <aside className="sidebar"><div className="sidebar-brand"><Logo /></div><nav className="main-nav"><span className="nav-label">启动器</span>{NAV_ITEMS.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => navigate(id)}><Icon size={19} /><span>{label}</span>{id === 'downloads' && activeDownloads > 0 && <b>{activeDownloads}</b>}{page === id && <i />}</button>)}</nav><div className="sidebar-bottom"><button className={`settings-nav ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={19} /><span>设置</span></button><button className="sidebar-player" onClick={() => navigate('settings')}><div className="mini-avatar">{state.settings.username.slice(0, 1).toUpperCase()}<i /></div><div><strong>{state.settings.username}</strong><span>离线模式</span></div><ChevronRight size={15} /></button><div className="sidebar-version">HCL v{state.appVersion || '1.1.0'} <span>•</span> 为热爱而创造</div></div></aside>
     <main className="main-area"><div className="page-header"><div><h1>{PAGE_META[page][0]}</h1><p>{PAGE_META[page][1]}</p></div>{page === 'home' && <button className="current-instance" onClick={() => setInstanceModal(true)}><div className="current-instance-icon"><Gamepad2 size={18} /></div><div><span>当前实例</span><strong>{selected?.name || '尚未安装游戏'}</strong></div><ChevronDown size={16} /></button>}</div><div className="page-scroll">
       {page === 'home' && <HomePage instances={state.instances} selected={selected} settings={state.settings} tasks={state.tasks} onLaunch={launch} launching={launching} running={selected && running.includes(selected.id)} onNavigate={navigate} onManage={() => setInstanceModal(true)} onSelect={selectInstance} onOpenFolder={() => window.hcl.openFolder('games')} java={java} />}
-      {page === 'versions' && <VersionsPage installed={state.instances} onInstall={install} installing={installing} />}
+      {page === 'versions' && <VersionsPage installed={state.instances} onInstall={install} installing={installing} settings={state.settings} />}
       {(page === 'mods' || page === 'shaders') && <ResourceBrowser key={page} kind={page === 'mods' ? 'mod' : 'shader'} instances={state.instances} selected={selected} onDownload={downloadResource} onRequireInstance={() => selected ? setInstanceModal(true) : setPage('versions')} />}
       {page === 'downloads' && <DownloadsPage tasks={state.tasks} onCancel={window.hcl.cancelTask} onOpenLog={() => window.hcl.openErrorLog()} onClear={async () => { const tasks = await window.hcl.clearTasks(); setState((old) => ({ ...old, tasks })); }} />}
-      {page === 'settings' && <SettingsPage settings={state.settings} dataRoot={state.dataRoot} onSave={saveSettings} onChooseJava={window.hcl.chooseJava} onChooseDirectory={window.hcl.chooseGameDirectory} onDetectJava={window.hcl.detectJava} java={java} setJava={setJava} onOpenRoot={() => window.hcl.openFolder('root')} />}
+      {page === 'settings' && <SettingsPage settings={state.settings} dataRoot={state.dataRoot} appVersion={state.appVersion} onCheckUpdates={checkUpdates} onSave={saveSettings} onChooseJava={window.hcl.chooseJava} onChooseDirectory={window.hcl.chooseGameDirectory} onDetectJava={window.hcl.detectJava} java={java} setJava={setJava} onOpenRoot={() => window.hcl.openFolder('root')} />}
     </div></main>
     {instanceModal && <InstanceModal instances={state.instances} selectedId={selected?.id} onClose={() => setInstanceModal(false)} onSelect={selectInstance} onDelete={deleteInstance} onOpenFolder={(id) => window.hcl.openFolder('instance', id)} onNew={() => setPage('versions')} />}
     <div className="toast-stack">{toasts.map((item) => <div className={`toast ${item.type}`} key={item.id}>{item.type === 'error' ? <AlertCircle size={18} /> : item.type === 'info' ? <Info size={18} /> : <CheckCircle2 size={18} />}<span>{item.message}</span><button onClick={() => setToasts((old) => old.filter((t) => t.id !== item.id))}><X size={14} /></button></div>)}</div>

@@ -1,6 +1,6 @@
 {
   "name": "hcl-launcher",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "author": "HCL",
   "description": "HCL - a clean Minecraft launcher with version, mod and shader downloads",
@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
-    "hcl-launcher": "file:c:/Users/你好/Desktop/HCL",
+    "electron-updater": "^6.8.11",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -29,6 +29,11 @@
   "build": {
     "appId": "cn.hcl.launcher",
     "productName": "HCL",
+    "publish": {
+      "provider": "github",
+      "owner": "houshibo0101",
+      "repo": "HCL"
+    },
     "directories": {
       "output": "release"
     },

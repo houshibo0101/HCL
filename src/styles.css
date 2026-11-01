@@ -311,6 +311,8 @@ select:hover { border-color: #3c4b40; }
 .about-card { border: 1px solid var(--border); background: linear-gradient(150deg, #18231b, #131a15); border-radius: 11px; padding: 22px; }
 .about-version { display: flex; gap: 6px; margin-top: 20px; }
 .about-version span { color: #8fa095; background: #222d25; border-radius: 4px; font-size: 8px; padding: 3px 6px; }
+.about-version .check-update { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; border: 0; background: rgba(123, 218, 140, .08); color: var(--green); border-radius: 4px; font-size: 8px; padding: 4px 7px; }
+.about-version .check-update:hover { background: rgba(123, 218, 140, .14); }
 .about-card > p { color: var(--muted); font-size: 9px; line-height: 1.8; margin: 14px 0; }
 .about-features { display: flex; flex-direction: column; gap: 9px; border-top: 1px solid var(--border); padding-top: 14px; }
 .about-features span { display: flex; align-items: center; gap: 6px; color: #93a299; font-size: 9px; }

@@ -8,6 +8,7 @@ const { spawn, execFile } = require('child_process');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const AdmZip = require('adm-zip');
+const { autoUpdater } = require('electron-updater');
 
 const isDev = !app.isPackaged;
 const DATA_ROOT = process.env.HCL_DATA_DIR || (process.platform === 'win32' && fs.existsSync('D:\\') ? 'D:\\HCL\\data' : path.join(app.getPath('userData'), 'data'));
@@ -144,7 +145,7 @@ async function downloadFile(url, destination, { signal, onProgress, expectedSize
     return { path: destination, size: stat.size, skipped: true };
   }
   await fsp.mkdir(path.dirname(destination), { recursive: true });
-  const temporary = `${destination}.part`;
+  const temporary = `${destination}.${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.part`;
   const response = await fetch(url, { signal, headers: { 'User-Agent': USER_AGENT } });
   if (!response.ok) throw new Error(`下载失败 (${response.status})：${path.basename(destination)}`);
   if (!response.body) throw new Error('下载响应为空');
@@ -163,7 +164,20 @@ async function downloadFile(url, destination, { signal, onProgress, expectedSize
   try {
     await pipeline(source, fs.createWriteStream(temporary));
     if (total && received !== total) throw new Error('文件未完整下载，请重试');
-    await fsp.rename(temporary, destination);
+    if (await fileExists(destination, expectedSize)) {
+      await fsp.rm(temporary, { force: true }).catch(() => {});
+      onProgress?.(received, total);
+      return { path: destination, size: received, skipped: true };
+    }
+    try {
+      await fsp.rename(temporary, destination);
+    } catch (renameError) {
+      if (renameError?.code === 'ENOENT' && await fileExists(destination)) {
+        // 同目标的并发任务刚完成下载，文件已就位，视为成功
+      } else {
+        throw renameError;
+      }
+    }
   } catch (error) {
     await fsp.rm(temporary, { force: true }).catch(() => {});
     throw error;
@@ -172,7 +186,14 @@ async function downloadFile(url, destination, { signal, onProgress, expectedSize
   return { path: destination, size: received, skipped: false };
 }
 
-async function downloadQueue(items, taskId, concurrency = 6) {
+async function downloadQueue(rawItems, taskId, concurrency = 6) {
+  // 防御性去重：同一目标路径只下载一次
+  const seen = new Set();
+  const items = rawItems.filter((item) => {
+    if (seen.has(item.destination)) return false;
+    seen.add(item.destination);
+    return true;
+  });
   const totalBytes = items.reduce((sum, item) => sum + (item.size || 0), 0);
   const progressByFile = new Map();
   let cursor = 0;
@@ -342,18 +363,27 @@ async function installVersion(version, name, loader = 'Vanilla') {
     const assetIndexPath = path.join(gameDir, 'assets', 'indexes', `${meta.assetIndex.id}.json`);
     await downloadFile(assetIndexUrl, assetIndexPath, { signal: controllers.get(taskId)?.signal, expectedSize: meta.assetIndex.size });
     const assetIndex = JSON.parse(await fsp.readFile(assetIndexPath, 'utf8'));
+    // 资源索引中多个路径可能共用同一哈希，按目标路径去重，避免并发写同一文件
     const downloads = [];
-    downloads.push({ ...meta.downloads.client, destination: path.join(versionDir, `${runtimeVersion}.jar`), label: '游戏客户端' });
+    const seenDestinations = new Set();
+    const pushDownload = (item) => {
+      if (seenDestinations.has(item.destination)) return false;
+      seenDestinations.add(item.destination);
+      downloads.push(item);
+      return true;
+    };
+    pushDownload({ ...meta.downloads.client, destination: path.join(versionDir, `${runtimeVersion}.jar`), label: '游戏客户端' });
     const nativeLibraries = [];
     for (const library of meta.libraries || []) {
       for (const file of libraryFiles(library, gameDir)) {
-        downloads.push({ ...file, label: path.basename(file.destination) });
-        if (file.native) nativeLibraries.push(file.destination);
+        if (pushDownload({ ...file, label: path.basename(file.destination) }) && file.native) {
+          nativeLibraries.push(file.destination);
+        }
       }
     }
     for (const [assetPath, object] of Object.entries(assetIndex.objects || {})) {
       const objectHash = object.hash;
-      downloads.push({
+      pushDownload({
         url: `https://resources.download.minecraft.net/${objectHash.slice(0, 2)}/${objectHash}`,
         size: object.size,
         destination: path.join(gameDir, 'assets', 'objects', objectHash.slice(0, 2), objectHash),
@@ -362,7 +392,7 @@ async function installVersion(version, name, loader = 'Vanilla') {
     }
     if (meta.logging?.client?.file) {
       const logFile = meta.logging.client.file;
-      downloads.push({ ...logFile, destination: path.join(gameDir, 'assets', 'log_configs', logFile.id), label: '日志配置' });
+      pushDownload({ ...logFile, destination: path.join(gameDir, 'assets', 'log_configs', logFile.id), label: '日志配置' });
     }
     await downloadQueue(downloads, taskId, 8);
     await fsp.mkdir(path.join(gameDir, 'mods'), { recursive: true });
@@ -498,7 +528,7 @@ async function launchGame(instanceId) {
     version_type: meta.type || 'release',
     natives_directory: nativesDir,
     launcher_name: 'HCL',
-    launcher_version: '1.0.0',
+    launcher_version: app.getVersion(),
     classpath: classpath.join(path.delimiter),
     classpath_separator: path.delimiter,
     library_directory: path.join(gameDir, 'libraries'),
@@ -580,7 +610,7 @@ async function downloadResource(resource) {
 }
 
 function registerIpc() {
-  ipcMain.handle('app:get-state', () => ({ settings, instances, tasks: [...tasks.values()], dataRoot: DATA_ROOT, running: [...gameProcesses.keys()] }));
+  ipcMain.handle('app:get-state', () => ({ settings, instances, tasks: [...tasks.values()], dataRoot: DATA_ROOT, appVersion: app.getVersion(), running: [...gameProcesses.keys()] }));
   ipcMain.handle('settings:save', async (_event, next) => {
     settings = { ...settings, ...next };
     if (!settings.username.trim()) settings.username = 'Player';
@@ -643,9 +673,58 @@ function registerIpc() {
     if (!fs.existsSync(ERROR_LOG_FILE)) await fsp.writeFile(ERROR_LOG_FILE, 'HCL 错误日志\n（此文件记录下载/安装失败详情，按时间追加）\n\n', 'utf8');
     return shell.openPath(ERROR_LOG_FILE);
   });
+  ipcMain.handle('app:check-updates', async () => {
+    if (!app.isPackaged) return { status: 'dev' };
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      return { status: result?.isUpdateAvailable ? 'available' : 'none', version: result?.updateInfo?.version || app.getVersion() };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  });
+  ipcMain.handle('app:install-update', () => {
+    if (!app.isPackaged) return { status: 'dev' };
+    autoUpdater.quitAndInstall(false, true);
+    return { status: 'installing' };
+  });
   ipcMain.handle('window:minimize', () => mainWindow.minimize());
   ipcMain.handle('window:maximize', () => mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize());
   ipcMain.handle('window:close', () => mainWindow.close());
+}
+
+let updateTaskId = null;
+
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('update-available', (info) => {
+    send('app:update', { status: 'available', version: info.version });
+    updateTaskId = createTask('update', `更新 HCL 至 v${info.version}`);
+  });
+  autoUpdater.on('update-not-available', (info) => send('app:update', { status: 'none', version: info.version }));
+  autoUpdater.on('download-progress', (progress) => {
+    if (updateTaskId) updateTask(updateTaskId, {
+      progress: progress.percent,
+      received: progress.transferred,
+      total: progress.total,
+      detail: `${(progress.transferred / 1048576).toFixed(1)} MB / ${(progress.total / 1048576).toFixed(1)} MB`,
+    });
+    send('app:update', { status: 'downloading', percent: progress.percent });
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    if (updateTaskId) {
+      finishTask(updateTaskId, 'completed', `v${info.version} 已就绪，重启应用后自动安装`);
+      updateTaskId = null;
+    }
+    send('app:update', { status: 'ready', version: info.version });
+  });
+  autoUpdater.on('error', (error) => {
+    if (updateTaskId) {
+      finishTask(updateTaskId, 'error', error.message);
+      updateTaskId = null;
+    }
+    send('app:update', { status: 'error', message: error.message });
+  });
 }
 
 function createWindow() {
@@ -690,7 +769,13 @@ function createWindow() {
 app.whenReady().then(async () => {
   await ensureStorage();
   registerIpc();
+  setupAutoUpdater();
   createWindow();
+  if (app.isPackaged) {
+    setTimeout(() => {
+      autoUpdater.checkForUpdates().catch(() => {});
+    }, 6000);
+  }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

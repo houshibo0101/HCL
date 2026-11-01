@@ -8,6 +8,7 @@ const listen = (channel, callback) => {
 };
 
 contextBridge.exposeInMainWorld('hcl', {
+  listen,
   getState: () => invoke('app:get-state'),
   saveSettings: (settings) => invoke('settings:save', settings),
   getVersions: (refresh) => invoke('versions:list', refresh),
@@ -25,6 +26,8 @@ contextBridge.exposeInMainWorld('hcl', {
   cancelTask: (id) => invoke('tasks:cancel', id),
   clearTasks: () => invoke('tasks:clear'),
   openErrorLog: () => invoke('logs:open-error'),
+  checkForUpdates: () => invoke('app:check-updates'),
+  installUpdate: () => invoke('app:install-update'),
   onTask: (callback) => listen('tasks:update', callback),
   onInstances: (callback) => listen('instances:update', callback),
   onGameLog: (callback) => listen('game:log', callback),
