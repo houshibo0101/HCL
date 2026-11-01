@@ -481,8 +481,15 @@ export default function App() {
   const prevThemeRef = useRef(null);
   useEffect(() => {
     const next = state.settings.theme || 'green';
+    const prev = prevThemeRef.current;
     prevThemeRef.current = next;
     document.documentElement.dataset.theme = next;
+    if (prev === null || prev === next) return;
+    // PCL2 式平滑换装：切换后 360ms 内启用全局颜色过渡（纯 CSS，绝不阻塞交互）
+    const root = document.documentElement;
+    root.classList.add('theme-morphing');
+    const timer = setTimeout(() => root.classList.remove('theme-morphing'), 360);
+    return () => { clearTimeout(timer); root.classList.remove('theme-morphing'); };
   }, [state.settings.theme]);
   const selected = state.instances.find((item) => item.id === state.settings.selectedInstanceId) || state.instances[0];
   const currentAccount = accounts.find((item) => item.id === currentAccountId) || accounts[0] || null;
