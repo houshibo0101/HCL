@@ -37,6 +37,7 @@ const defaultSettings = () => ({
   autoChineseLang: true,
   autoUpdate: true,
   autoDownloadJava: true,
+  memoryOptimize: true,
 });
 
 const THEME_BACKGROUNDS = {
@@ -793,6 +794,31 @@ async function detectJava() {
   return { found: true, ...list[0] };
 }
 
+// ---------- 启动前内存优化（PCL2 同款思路：压缩各进程工作集） ----------
+
+const MEMORY_OPTIMIZE_PS = `
+$sig = '[DllImport("psapi.dll")] public static extern bool EmptyWorkingSet(IntPtr hProcess);'
+Add-Type -MemberDefinition $sig -Name Kernel -Namespace Win32 | Out-Null
+$before = [Math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1024)
+Get-Process | ForEach-Object { try { [Win32.Kernel]::EmptyWorkingSet($_.Handle) } catch {} } | Out-Null
+Start-Sleep -Milliseconds 500
+$after = [Math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1024)
+$after - $before
+`;
+
+async function optimizeMemory() {
+  if (process.platform !== 'win32') return 0;
+  try {
+    const encoded = Buffer.from(MEMORY_OPTIMIZE_PS, 'utf16le').toString('base64');
+    const { stdout } = await new Promise((resolve, reject) => {
+      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], { timeout: 15000, windowsHide: true, maxBuffer: 1024 * 1024 }, (err, out) => err ? reject(err) : resolve({ stdout: out }));
+    });
+    const lines = String(stdout).trim().split(/\r?\n/).filter(Boolean);
+    const freed = parseInt(lines[lines.length - 1], 10);
+    return Number.isFinite(freed) ? Math.max(0, freed) : 0;
+  } catch { return 0; }
+}
+
 // ---------- Java 自动匹配与下载 ----------
 
 const JAVA_MANAGED_ROOT = path.join(DATA_ROOT, 'runtime');
@@ -979,6 +1005,11 @@ async function launchGame(instanceId) {
   const instance = instances.find((item) => item.id === instanceId);
   if (!instance) throw new Error('请先选择游戏实例');
   if (gameProcesses.has(instanceId)) throw new Error('这个实例已经在运行中');
+  // 启动前内存优化：可用内存不足 3GB 时自动压缩各进程工作集
+  if (process.platform === 'win32' && settings.memoryOptimize !== false && os.freemem() < 3 * 1024 * 1024 * 1024) {
+    const freed = await optimizeMemory();
+    if (freed > 0) send('app:toast', { message: `启动前内存优化完成，已释放 ${freed} MB 可用空间`, type: 'info' });
+  }
   const { java } = await resolveJavaForInstance(instance);
   const runtimeVersion = instance.runtimeVersion || instance.version;
   const metaPath = path.join(instance.versionDir, `${runtimeVersion}.json`);
@@ -1302,6 +1333,7 @@ function registerIpc() {
     return result.canceled ? null : result.filePaths[0];
   });
   ipcMain.handle('java:detect', () => detectJava());
+  ipcMain.handle('system:optimize-memory', () => optimizeMemory());
   ipcMain.handle('tasks:cancel', (_event, id) => {
     controllers.get(id)?.abort();
     updateTask(id, { status: 'cancelled', detail: '已取消' });

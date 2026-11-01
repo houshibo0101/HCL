@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('hcl', {
   chooseJava: () => invoke('dialog:java'),
   chooseGameDirectory: () => invoke('dialog:directory'),
   detectJava: () => invoke('java:detect'),
+  optimizeMemory: () => invoke('system:optimize-memory'),
   cancelTask: (id) => invoke('tasks:cancel', id),
   clearTasks: () => invoke('tasks:clear'),
   openErrorLog: () => invoke('logs:open-error'),
