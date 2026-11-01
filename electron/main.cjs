@@ -35,6 +35,7 @@ const defaultSettings = () => ({
   closeOnLaunch: false,
   theme: 'green',
   autoChineseLang: true,
+  autoUpdate: true,
 });
 
 const THEME_BACKGROUNDS = {
@@ -945,6 +946,7 @@ function registerIpc() {
     settings.memory = Math.max(1024, Math.min(32768, Number(settings.memory) || 4096));
     await fsp.mkdir(settings.gameDirectory, { recursive: true });
     await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    scheduleUpdateChecks();
     return settings;
   });
   ipcMain.handle('versions:list', (_event, refresh) => getVersionManifest(refresh));
@@ -1120,6 +1122,24 @@ function registerIpc() {
 }
 
 let updateTaskId = null;
+let updateTimer = null;
+const UPDATE_CHECK_INTERVAL = 4 * 60 * 60 * 1000; // 运行中每 4 小时复查一次更新
+
+function canAutoUpdate() {
+  return app.isPackaged && process.platform === 'win32' && settings.autoUpdate !== false;
+}
+
+function scheduleUpdateChecks() {
+  if (updateTimer) {
+    clearInterval(updateTimer);
+    updateTimer = null;
+  }
+  if (!canAutoUpdate()) return;
+  updateTimer = setInterval(() => {
+    autoUpdater.checkForUpdates().catch(() => {});
+  }, UPDATE_CHECK_INTERVAL);
+  updateTimer.unref?.();
+}
 
 function setupAutoUpdater() {
   autoUpdater.autoDownload = true;
@@ -1200,9 +1220,12 @@ app.whenReady().then(async () => {
   setupAutoUpdater();
   createWindow();
   if (app.isPackaged && process.platform === 'win32') {
-    setTimeout(() => {
-      autoUpdater.checkForUpdates().catch(() => {});
-    }, 6000);
+    if (settings.autoUpdate !== false) {
+      setTimeout(() => {
+        autoUpdater.checkForUpdates().catch(() => {});
+      }, 6000);
+    }
+    scheduleUpdateChecks();
   }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

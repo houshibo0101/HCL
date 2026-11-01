@@ -4,7 +4,7 @@ import {
   ChevronDown, ChevronRight, Clock3, Download, ExternalLink, FolderOpen,
   Gamepad2, HardDrive, Home, Info, Layers3, Leaf, LoaderCircle, MemoryStick,
   Minus, Package, Pickaxe, Play, Plus, RefreshCw, Search, Settings, ShieldCheck,
-  Sparkles, Square,   Trash2, UserRound, X, XCircle, Zap, FileText, Languages, Palette, Network, Users, Globe, Terminal, Copy, LogIn,
+  Sparkles, Square,   Trash2, UserRound, X, XCircle, Zap, FileText, Languages, Palette, Network, Users, Globe, Terminal, Copy, LogIn, Rocket,
 } from 'lucide-react';
 import { translateQuery, lookupProject } from './modDictionary';
 
@@ -328,12 +328,13 @@ function NetworkPage({ toast }) {
   </div>;
 }
 
-function DownloadsPage({ tasks, onCancel, onClear, onOpenLog }) {
+function DownloadsPage({ tasks, onCancel, onClear, onOpenLog, onInstallUpdate }) {
   const sorted = [...tasks].sort((a, b) => b.createdAt - a.createdAt);
   const active = sorted.filter((task) => task.status === 'downloading');
   return <div className="page downloads-page">
     <div className="download-summary"><div className="download-summary-icon"><Download size={25} /></div><div><strong>{active.length ? `${active.length} 个任务正在下载` : '下载队列很安静'}</strong><p>{active.length ? '可以离开此页面，下载会在后台继续。' : '安装游戏或下载 Mod、光影后，任务会显示在这里。'}</p></div>{sorted.length > 0 && <button className="button ghost small" onClick={onClear}>清除已完成</button>}</div>
     <div className="download-list">{sorted.map((task) => { const TaskIcon = { game: Box, shader: Sparkles, update: RefreshCw }[task.kind] || Package; return <article className="download-task" key={task.id}><div className={`task-icon ${task.kind}`}><TaskIcon size={23} /></div><div className="task-body"><div className="task-heading"><div><strong>{task.title}</strong><span>{task.detail}</span></div><span className={`task-status ${task.status}`}>{task.status === 'downloading' ? `${Math.floor(task.progress)}%` : task.status === 'completed' ? <><CheckCircle2 size={15} />已完成</> : task.status === 'cancelled' ? '已取消' : <><XCircle size={15} />失败</>}</span></div><div className="progress-track"><i className={task.status} style={{ width: `${task.progress}%` }} /></div><div className="task-meta"><span>{task.total ? `${formatBytes(task.received)} / ${formatBytes(task.total)}` : task.kind === 'game' ? '正在准备游戏文件' : '正在连接资源服务器'}</span><time>{new Date(task.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></div></div>{task.status === 'downloading' && task.kind !== 'update' && <IconButton title="取消下载" onClick={() => onCancel(task.id)}><X size={17} /></IconButton>}
+{task.kind === 'update' && task.status === 'completed' && <button className="button primary small" onClick={onInstallUpdate}><Rocket size={14} />重启安装</button>}
 {task.status === 'error' && <button className="text-button log-open" onClick={onOpenLog}><FileText size={14} />失败日志</button>}</article>; })}{!sorted.length && <EmptyState icon={Download} title="还没有下载任务" text="去游戏版本、Mod 或光影页面找点喜欢的内容吧。" />}</div>
   </div>;
 }
@@ -366,6 +367,7 @@ function SettingsPage({ settings, dataRoot, appVersion, platform, onCheckUpdates
       <section className="settings-section"><div className="settings-title"><Palette size={19} /><div><h2>外观主题</h2><p>选择启动器的强调色，点击立即生效并保存</p></div></div><div className="theme-grid">{THEMES.map((theme) => <button key={theme.id} className={`theme-card ${form.theme === theme.id ? 'selected' : ''}`} onClick={() => applyTheme(theme.id)}><span className="theme-swatch" style={{ background: `linear-gradient(135deg, ${theme.c1}, ${theme.c2})` }} /><span>{theme.name}{form.theme === theme.id && <Check size={13} />}</span></button>)}</div></section>
       <section className="settings-section"><div className="settings-title"><Zap size={19} /><div><h2>Java 环境</h2><p>启动 Minecraft 所需的 Java 运行环境</p></div></div><div className="java-status"><div className={`java-status-icon ${java?.found ? 'ok' : ''}`}>{java?.found ? <Check size={20} /> : <AlertCircle size={20} />}</div><div><strong>{java?.found ? `已检测到 Java ${java.version}` : '未检测到可用的 Java'}</strong><span>{java?.found ? java.path : '1.20.5 及以上建议 Java 21，较新版本建议 Java 17'}</span></div><div className="java-actions">{!java?.found && <a className="button secondary small" href="https://adoptium.net/temurin/releases/?version=21" target="_blank" rel="noreferrer"><Download size={14} />获取 Java 21</a>}<button className="button secondary small" onClick={async () => { setJava(null); setJava(await onDetectJava()); }}><RefreshCw size={14} />重新检测</button></div></div><label className="field horizontal"><span>Java 路径</span><div className="path-input"><input value={form.javaPath} onChange={(e) => update('javaPath', e.target.value)} placeholder="留空以自动检测 java.exe" /><button className="button secondary small" onClick={async () => { const file = await onChooseJava(); if (file) update('javaPath', file); }}>浏览</button></div></label><div className="field horizontal"><span>游戏内存</span><div className="memory-control"><div><MemoryStick size={16} /><input type="range" min="1024" max="16384" step="512" value={form.memory} onChange={(e) => update('memory', Number(e.target.value))} /><strong>{(form.memory / 1024).toFixed(1)} GB</strong></div><small>通常分配 4 GB 即可；大型 Mod 整合包可适当增加</small></div></div></section>
       <section className="settings-section"><div className="settings-title"><HardDrive size={19} /><div><h2>存储位置</h2><p>游戏实例、Mod 和光影的保存目录</p></div></div><label className="field horizontal"><span>游戏目录</span><div className="path-input"><input value={form.gameDirectory} onChange={(e) => update('gameDirectory', e.target.value)} /><button className="button secondary small" onClick={async () => { const folder = await onChooseDirectory(); if (folder) update('gameDirectory', folder); }}>浏览</button></div></label><div className="storage-note"><Info size={15} /><span>配置与缓存目录：{dataRoot}</span><button onClick={onOpenRoot}><FolderOpen size={14} />打开</button></div></section>
+      <section className="settings-section"><div className="settings-title"><Rocket size={19} /><div><h2>启动器更新</h2><p>自动检查新版本并在后台下载，重启后即可完成安装</p></div></div><div className="toggle-row"><div><strong>自动检查并下载更新</strong><span>开启后，启动时和运行中每 4 小时各检查一次；关闭后仍可在右侧关于卡片手动检查</span></div><button className={`switch ${form.autoUpdate !== false ? 'on' : ''}`} onClick={async () => { const next = form.autoUpdate === false; update('autoUpdate', next); try { await onSave({ ...form, autoUpdate: next }); } catch {} }}><i /></button></div></section>
       <button className="button primary save-settings" disabled={saving} onClick={save}>{saving ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}保存设置</button>
       {accountModal && <Modal title="添加游戏账户" subtitle="离线账户或皮肤站账户（Yggdrasil 外置登录）" onClose={() => setAccountModal(false)}>
         <div className="segmented">{[['offline', '离线模式'], ['yggdrasil', '皮肤站账户']].map(([id, label]) => <button key={id} className={authType === id ? 'active' : ''} onClick={() => setAuthType(id)}>{label}</button>)}</div>
@@ -395,7 +397,7 @@ function SettingsPage({ settings, dataRoot, appVersion, platform, onCheckUpdates
           finally { setAuthBusy(false); }
         }}>{authBusy ? <LoaderCircle className="spin" size={17} /> : authType === 'offline' ? '创建离线账户' : '登录'}</button>
       </Modal>}
-    </div><aside className="settings-aside"><div className="about-card"><Logo /><div className="about-version"><span>版本 {appVersion || '1.5.0'}</span><span>{platform === 'darwin' ? 'macOS' : 'Windows'}</span><button className="check-update" onClick={onCheckUpdates}><RefreshCw size={12} />检查更新</button></div><p>一个简单、清爽的 Minecraft 启动器。专注于游戏与社区内容，不做多余的事情。</p><div className="about-features"><span><Check size={14} />官方游戏版本</span><span><Check size={14} />Modrinth 资源</span><span><Check size={14} />本地实例管理</span></div></div><div className="legal-note">Minecraft 是 Mojang Synergies AB 的商标。HCL 不是官方 Minecraft 产品，与 Mojang 或 Microsoft 无隶属关系。</div></aside></div>
+    </div><aside className="settings-aside"><div className="about-card"><Logo /><div className="about-version"><span>版本 {appVersion || '1.6.1'}</span><span>{platform === 'darwin' ? 'macOS' : 'Windows'}</span><button className="check-update" onClick={onCheckUpdates}><RefreshCw size={12} />检查更新</button></div><p>一个简单、清爽的 Minecraft 启动器。专注于游戏与社区内容，不做多余的事情。</p><div className="about-features"><span><Check size={14} />官方游戏版本</span><span><Check size={14} />Modrinth 资源</span><span><Check size={14} />本地实例管理</span></div></div><div className="legal-note">Minecraft 是 Mojang Synergies AB 的商标。HCL 不是官方 Minecraft 产品，与 Mojang 或 Microsoft 无隶属关系。</div></aside></div>
   </div>;
 }
 
@@ -405,13 +407,15 @@ function InstanceModal({ instances, selectedId, onClose, onSelect, onDelete, onO
 
 export default function App() {
   const [page, setPage] = useState('home');
-  const [state, setState] = useState({ settings: { username: 'Player', memory: 4096 }, instances: [], tasks: [], dataRoot: 'D:\\HCL\\data', appVersion: '1.5.0', platform: 'win32' });
+  const [state, setState] = useState({ settings: { username: 'Player', memory: 4096 }, instances: [], tasks: [], dataRoot: 'D:\\HCL\\data', appVersion: '1.6.1', platform: 'win32' });
   const [ready, setReady] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [instanceModal, setInstanceModal] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [running, setRunning] = useState([]);
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
   const [java, setJava] = useState(null);
   const [accounts, setAccounts] = useState([]);
   const [currentAccountId, setCurrentAccountId] = useState(null);
@@ -433,8 +437,14 @@ export default function App() {
       if (data.exited) { setRunning((old) => old.filter((id) => id !== data.instanceId)); toast('游戏进程已退出', 'info'); }
     });
     const offUpdate = window.hcl.listen('app:update', (data) => {
-      if (data?.status === 'ready') toast(`HCL v${data.version} 已下载完成，重启后自动安装`, 'info');
-      else if (data?.status === 'available') toast(`发现新版本 v${data.version}，正在后台下载…`, 'info');
+      if (!data) return;
+      setUpdateInfo((old) => {
+        // 已就绪状态不被后续的「无更新」事件覆盖
+        if (data.status === 'none' && old?.status === 'ready') return old;
+        return { ...old, ...data };
+      });
+      if (data.status === 'ready') { setUpdateBannerDismissed(false); toast(`HCL v${data.version} 已下载完成，可立即重启安装`, 'info'); }
+      else if (data.status === 'available') toast(`发现新版本 v${data.version}，正在后台下载…`, 'info');
     });
     return () => { offTask(); offInstances(); offLog(); offUpdate(); offAccounts(); };
   }, [toast, refreshAccounts]);
@@ -498,16 +508,26 @@ export default function App() {
   if (!ready) return <div className="app-loading"><Logo /><LoaderCircle className="spin" size={22} /><span>正在准备你的世界…</span></div>;
   return <div className={`app-shell ${isMac ? 'platform-mac' : ''}`}>
     <header className="titlebar"><div className="titlebar-brand"><Logo compact /></div><div className="window-title"><span>HCL</span><i />{PAGE_META[page][0]}</div>{!isMac && <div className="window-controls"><button onClick={() => window.hcl.windowMinimize()}><Minus size={16} /></button><button onClick={() => window.hcl.windowMaximize()}><Square size={13} /></button><button className="window-close" onClick={() => window.hcl.windowClose()}><X size={17} /></button></div>}</header>
-    <aside className="sidebar"><div className="sidebar-brand"><Logo /></div><nav className="main-nav"><span className="nav-label">启动器</span>{NAV_ITEMS.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => navigate(id)}><Icon size={19} /><span>{label}</span>{id === 'downloads' && activeDownloads > 0 && <b>{activeDownloads}</b>}{page === id && <i />}</button>)}</nav><div className="sidebar-bottom"><button className={`settings-nav ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={19} /><span>设置</span></button><button className="sidebar-player" onClick={() => navigate('settings')}><div className="mini-avatar">{state.settings.username.slice(0, 1).toUpperCase()}<i /></div><div><strong>{state.settings.username}</strong><span>离线模式</span></div><ChevronRight size={15} /></button><div className="sidebar-version" title="点击检查启动器更新" onClick={checkUpdates}>HCL v{state.appVersion || '1.4.2'} <span>•</span> 点击检查更新</div></div></aside>
+    <aside className="sidebar"><div className="sidebar-brand"><Logo /></div><nav className="main-nav"><span className="nav-label">启动器</span>{NAV_ITEMS.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => navigate(id)}><Icon size={19} /><span>{label}</span>{id === 'downloads' && activeDownloads > 0 && <b>{activeDownloads}</b>}{page === id && <i />}</button>)}</nav><div className="sidebar-bottom"><button className={`settings-nav ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={19} /><span>设置</span></button><button className="sidebar-player" onClick={() => navigate('settings')}><div className="mini-avatar">{state.settings.username.slice(0, 1).toUpperCase()}<i /></div><div><strong>{state.settings.username}</strong><span>离线模式</span></div><ChevronRight size={15} /></button>{updateInfo?.status === 'ready'
+        ? <div className="sidebar-version ready" title="重启后自动完成安装" onClick={() => window.hcl.installUpdate()}>v{updateInfo.version} 已就绪 <span>•</span> 点击重启安装</div>
+        : updateInfo?.status === 'downloading'
+          ? <div className="sidebar-version" title="新版本正在后台下载">正在下载更新 {Math.floor(updateInfo.percent || 0)}%</div>
+          : <div className="sidebar-version" title="点击检查启动器更新" onClick={checkUpdates}>HCL v{state.appVersion || '1.6.1'} <span>•</span> 点击检查更新</div>}</div></aside>
     <main className="main-area"><div className="page-header"><div><h1>{PAGE_META[page][0]}</h1><p>{PAGE_META[page][1]}</p></div>{page === 'home' && <button className="current-instance" onClick={() => setInstanceModal(true)}><div className="current-instance-icon"><Gamepad2 size={18} /></div><div><span>当前实例</span><strong>{selected?.name || '尚未安装游戏'}</strong></div><ChevronDown size={16} /></button>}</div><div className="page-scroll">
       {page === 'home' && <HomePage instances={state.instances} selected={selected} settings={state.settings} tasks={state.tasks} onLaunch={launch} launching={launching} running={selected && running.includes(selected.id)} onNavigate={navigate} onManage={() => setInstanceModal(true)} onSelect={selectInstance} onOpenFolder={() => window.hcl.openFolder('games')} java={java} appVersion={state.appVersion} onCheckUpdates={checkUpdates} platform={state.platform} account={currentAccount} />}
       {page === 'versions' && <VersionsPage installed={state.instances} onInstall={install} installing={installing} settings={state.settings} />}
       {(page === 'mods' || page === 'shaders') && <ResourceBrowser key={page} kind={page === 'mods' ? 'mod' : 'shader'} instances={state.instances} selected={selected} onDownload={downloadResource} onRequireInstance={() => selected ? setInstanceModal(true) : setPage('versions')} />}
-      {page === 'downloads' && <DownloadsPage tasks={state.tasks} onCancel={window.hcl.cancelTask} onOpenLog={() => window.hcl.openErrorLog()} onClear={async () => { const tasks = await window.hcl.clearTasks(); setState((old) => ({ ...old, tasks })); }} />}
+      {page === 'downloads' && <DownloadsPage tasks={state.tasks} onCancel={window.hcl.cancelTask} onOpenLog={() => window.hcl.openErrorLog()} onInstallUpdate={() => window.hcl.installUpdate()} onClear={async () => { const tasks = await window.hcl.clearTasks(); setState((old) => ({ ...old, tasks })); }} />}
       {page === 'network' && <NetworkPage toast={toast} />}
       {page === 'settings' && <SettingsPage settings={state.settings} dataRoot={state.dataRoot} appVersion={state.appVersion} platform={state.platform} onCheckUpdates={checkUpdates} onSave={saveSettings} onChooseJava={window.hcl.chooseJava} onChooseDirectory={window.hcl.chooseGameDirectory} onDetectJava={window.hcl.detectJava} java={java} setJava={setJava} onOpenRoot={() => window.hcl.openFolder('root')} toast={toast} accounts={accounts} currentAccountId={currentAccountId} refreshAccounts={refreshAccounts} />}
     </div></main>
     {instanceModal && <InstanceModal instances={state.instances} selectedId={selected?.id} onClose={() => setInstanceModal(false)} onSelect={selectInstance} onDelete={deleteInstance} onOpenFolder={(id) => window.hcl.openFolder('instance', id)} onNew={() => setPage('versions')} />}
+    {updateInfo?.status === 'ready' && !updateBannerDismissed && <div className="update-banner">
+      <div className="update-banner-icon"><Rocket size={20} /></div>
+      <div className="update-banner-body"><strong>HCL v{updateInfo.version} 已就绪</strong><span>重启启动器即可完成安装，只需几秒钟</span></div>
+      <button className="button primary small" onClick={() => window.hcl.installUpdate()}>立即重启</button>
+      <button className="button ghost small" onClick={() => setUpdateBannerDismissed(true)}>稍后</button>
+    </div>}
     <div className="toast-stack">{toasts.map((item) => <div className={`toast ${item.type}`} key={item.id}>{item.type === 'error' ? <AlertCircle size={18} /> : item.type === 'info' ? <Info size={18} /> : <CheckCircle2 size={18} />}<span>{item.message}</span><button onClick={() => setToasts((old) => old.filter((t) => t.id !== item.id))}><X size={14} /></button></div>)}</div>
   </div>;
 }
