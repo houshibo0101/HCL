@@ -4,9 +4,18 @@ import {
   ChevronDown, ChevronRight, Clock3, Download, ExternalLink, FolderOpen,
   Gamepad2, HardDrive, Home, Info, Layers3, Leaf, LoaderCircle, MemoryStick,
   Minus, Package, Pickaxe, Play, Plus, RefreshCw, Search, Settings, ShieldCheck,
-  Sparkles, Square,   Trash2, UserRound, X, XCircle, Zap, FileText, Languages,
+  Sparkles, Square,   Trash2, UserRound, X, XCircle, Zap, FileText, Languages, Palette,
 } from 'lucide-react';
 import { translateQuery, lookupProject } from './modDictionary';
+
+const THEMES = [
+  { id: 'green', name: '翡翠绿', c1: '#83df90', c2: '#50b967' },
+  { id: 'blue', name: '穹际蓝', c1: '#8ccbf7', c2: '#3d82d6' },
+  { id: 'purple', name: '星辉紫', c1: '#c39bfa', c2: '#7e4fd6' },
+  { id: 'orange', name: '暖阳橙', c1: '#f6bd7d', c2: '#e0762d' },
+  { id: 'pink', name: '樱花粉', c1: '#fa92bd', c2: '#d64f86' },
+  { id: 'teal', name: '薄荷青', c1: '#7fe8d9', c2: '#33a392' },
+];
 
 const NAV_ITEMS = [
   { id: 'home', label: '首页', icon: Home },
@@ -284,10 +293,15 @@ function SettingsPage({ settings, dataRoot, appVersion, onCheckUpdates, onSave, 
   const [saving, setSaving] = useState(false);
   useEffect(() => setForm(settings), [settings]);
   const update = (key, value) => setForm((old) => ({ ...old, [key]: value }));
+  const applyTheme = async (id) => {
+    update('theme', id);
+    try { await onSave({ ...form, theme: id }); } catch {}
+  };
   const save = async () => { setSaving(true); try { await onSave(form); } finally { setSaving(false); } };
   return <div className="page settings-page">
     <div className="settings-layout"><div className="settings-main">
       <section className="settings-section"><div className="settings-title"><UserRound size={19} /><div><h2>玩家设置</h2><p>用于离线模式的游戏内显示名称</p></div></div><label className="field horizontal"><span>玩家名称</span><div><input value={form.username} maxLength={16} onChange={(e) => update('username', e.target.value)} /><small>建议使用 3–16 个字母、数字或下划线</small></div></label></section>
+      <section className="settings-section"><div className="settings-title"><Palette size={19} /><div><h2>外观主题</h2><p>选择启动器的强调色，点击立即生效并保存</p></div></div><div className="theme-grid">{THEMES.map((theme) => <button key={theme.id} className={`theme-card ${form.theme === theme.id ? 'selected' : ''}`} onClick={() => applyTheme(theme.id)}><span className="theme-swatch" style={{ background: `linear-gradient(135deg, ${theme.c1}, ${theme.c2})` }} /><span>{theme.name}{form.theme === theme.id && <Check size={13} />}</span></button>)}</div></section>
       <section className="settings-section"><div className="settings-title"><Zap size={19} /><div><h2>Java 环境</h2><p>启动 Minecraft 所需的 Java 运行环境</p></div></div><div className="java-status"><div className={`java-status-icon ${java?.found ? 'ok' : ''}`}>{java?.found ? <Check size={20} /> : <AlertCircle size={20} />}</div><div><strong>{java?.found ? `已检测到 Java ${java.version}` : '未检测到可用的 Java'}</strong><span>{java?.found ? java.path : '1.20.5 及以上建议 Java 21，较新版本建议 Java 17'}</span></div><div className="java-actions">{!java?.found && <a className="button secondary small" href="https://adoptium.net/temurin/releases/?version=21" target="_blank" rel="noreferrer"><Download size={14} />获取 Java 21</a>}<button className="button secondary small" onClick={async () => { setJava(null); setJava(await onDetectJava()); }}><RefreshCw size={14} />重新检测</button></div></div><label className="field horizontal"><span>Java 路径</span><div className="path-input"><input value={form.javaPath} onChange={(e) => update('javaPath', e.target.value)} placeholder="留空以自动检测 java.exe" /><button className="button secondary small" onClick={async () => { const file = await onChooseJava(); if (file) update('javaPath', file); }}>浏览</button></div></label><div className="field horizontal"><span>游戏内存</span><div className="memory-control"><div><MemoryStick size={16} /><input type="range" min="1024" max="16384" step="512" value={form.memory} onChange={(e) => update('memory', Number(e.target.value))} /><strong>{(form.memory / 1024).toFixed(1)} GB</strong></div><small>通常分配 4 GB 即可；大型 Mod 整合包可适当增加</small></div></div></section>
       <section className="settings-section"><div className="settings-title"><HardDrive size={19} /><div><h2>存储位置</h2><p>游戏实例、Mod 和光影的保存目录</p></div></div><label className="field horizontal"><span>游戏目录</span><div className="path-input"><input value={form.gameDirectory} onChange={(e) => update('gameDirectory', e.target.value)} /><button className="button secondary small" onClick={async () => { const folder = await onChooseDirectory(); if (folder) update('gameDirectory', folder); }}>浏览</button></div></label><div className="storage-note"><Info size={15} /><span>配置与缓存目录：{dataRoot}</span><button onClick={onOpenRoot}><FolderOpen size={14} />打开</button></div></section>
       <button className="button primary save-settings" disabled={saving} onClick={save}>{saving ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}保存设置</button>
@@ -326,6 +340,9 @@ export default function App() {
     });
     return () => { offTask(); offInstances(); offLog(); offUpdate(); };
   }, [toast]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = state.settings.theme || 'green';
+  }, [state.settings.theme]);
   const selected = state.instances.find((item) => item.id === state.settings.selectedInstanceId) || state.instances[0];
   const activeDownloads = state.tasks.filter((task) => task.status === 'downloading').length;
   const navigate = (next) => setPage(next);

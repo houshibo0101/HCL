@@ -31,7 +31,13 @@ const defaultSettings = () => ({
   gameDirectory: path.join(DATA_ROOT, 'games'),
   selectedInstanceId: null,
   closeOnLaunch: false,
+  theme: 'green',
 });
+
+const THEME_BACKGROUNDS = {
+  green: '#0d120f', blue: '#0d1114', purple: '#0f0d13',
+  orange: '#120f0c', pink: '#120d0f', teal: '#0c1110',
+};
 
 async function ensureStorage() {
   await fsp.mkdir(DATA_ROOT, { recursive: true });
@@ -923,7 +929,7 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 700,
     frame: false,
-    backgroundColor: '#0e1310',
+    backgroundColor: THEME_BACKGROUNDS[settings.theme] || THEME_BACKGROUNDS.green,
     icon: path.join(__dirname, isDev ? '../public/hcl.png' : '../dist/hcl.png'),
     show: false,
     webPreferences: {
