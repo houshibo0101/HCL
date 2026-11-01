@@ -139,8 +139,11 @@ input::placeholder { color: #68766c; }
 .page-header h1 { font-size: 21px; line-height: 1.3; margin: 0 0 5px; letter-spacing: -.4px; }
 .page-header p { margin: 0; color: var(--muted); font-size: 11px; }
 .page-scroll { overflow-y: auto; overflow-x: hidden; padding: 0 32px 35px; flex: 1; }
-.page { width: 100%; max-width: 1450px; margin: 0 auto; animation: page-in .25s ease-out; }
-@keyframes page-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.page { width: 100%; max-width: 1450px; margin: 0 auto; }
+::view-transition-old(root) { animation: vt-out .16s ease-in both; }
+::view-transition-new(root) { animation: vt-in .2s ease-out .03s both; }
+@keyframes vt-out { to { opacity: 0; transform: translateY(-5px); } }
+@keyframes vt-in { from { opacity: 0; transform: translateY(7px); } }
 .current-instance { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); background: #141b16; border-radius: 9px; padding: 8px 11px 8px 8px; min-width: 200px; text-align: left; }
 .current-instance:hover { border-color: var(--border-strong); }
 .current-instance-icon { width: 32px; height: 32px; display: grid; place-items: center; background: var(--accent-dim-b); color: var(--green); border-radius: 7px; }
@@ -329,6 +332,27 @@ select:hover { border-color: #3c4b40; }
 .progress-track i.downloading:after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,.3), transparent); animation: shimmer 1.5s infinite; }
 .progress-track i.error { background: #d76a6a; }
 .progress-track i.cancelled { background: #647168; }
+/* 卡片入场节奏：网格子项依次升起 */
+.version-grid > *, .resource-grid > *, .download-list > *, .settings-main > section { animation: rise-in .3s ease-out both; }
+@keyframes rise-in { from { opacity: 0; transform: translateY(8px); } }
+.version-grid > *:nth-child(2), .resource-grid > *:nth-child(2), .download-list > *:nth-child(2), .settings-main > section:nth-child(2) { animation-delay: .03s; }
+.version-grid > *:nth-child(3), .resource-grid > *:nth-child(3), .download-list > *:nth-child(3), .settings-main > section:nth-child(3) { animation-delay: .06s; }
+.version-grid > *:nth-child(4), .resource-grid > *:nth-child(4), .download-list > *:nth-child(4), .settings-main > section:nth-child(4) { animation-delay: .09s; }
+.version-grid > *:nth-child(5), .resource-grid > *:nth-child(5), .download-list > *:nth-child(5), .settings-main > section:nth-child(5) { animation-delay: .12s; }
+.version-grid > *:nth-child(6), .resource-grid > *:nth-child(6), .download-list > *:nth-child(6), .settings-main > section:nth-child(6) { animation-delay: .15s; }
+.version-grid > *:nth-child(7), .resource-grid > *:nth-child(7), .download-list > *:nth-child(7), .settings-main > section:nth-child(7) { animation-delay: .18s; }
+.version-grid > *:nth-child(8), .resource-grid > *:nth-child(8), .download-list > *:nth-child(8), .settings-main > section:nth-child(8) { animation-delay: .21s; }
+.version-grid > *:nth-child(9), .resource-grid > *:nth-child(9), .download-list > *:nth-child(9), .settings-main > section:nth-child(9) { animation-delay: .24s; }
+.version-grid > *:nth-child(n+10), .resource-grid > *:nth-child(n+10), .download-list > *:nth-child(n+10), .settings-main > section:nth-child(n+10) { animation-delay: .26s; }
+/* 按压反馈 */
+.button:active, .icon-button:active, .text-button:active, .theme-card:active, .quick-card:active { transform: scale(.97); }
+.play-button { transition: transform .15s ease, background .15s ease; }
+.play-button:active { transform: scale(.97); }
+/* 系统开启“减弱动态效果”时全部动画退化为瞬时 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  ::view-transition-old(root), ::view-transition-new(root) { animation: none !important; }
+}
 .task-meta { display: flex; justify-content: space-between; font-size: 8px; color: #68766c; }
 
 .settings-layout { display: grid; grid-template-columns: minmax(0, 1fr) 265px; gap: 20px; align-items: start; }

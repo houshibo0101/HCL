@@ -1,6 +1,6 @@
 {
   "name": "hcl-launcher",
-  "version": "1.6.5",
+  "version": "1.6.6",
   "private": true,
   "author": "HCL",
   "description": "HCL - a clean Minecraft launcher with version, mod and shader downloads",

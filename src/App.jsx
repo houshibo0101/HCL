@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, flushSync } from 'react';
 import {
   AlertCircle, ArrowRight, Blocks, Box, CalendarDays, Check, CheckCircle2, Coffee,
   ChevronDown, ChevronRight, Clock3, Download, ExternalLink, FolderOpen,
@@ -476,12 +476,26 @@ export default function App() {
     return () => { offTask(); offInstances(); offLog(); offUpdate(); offAccounts(); };
   }, [toast, refreshAccounts]);
   useEffect(() => {
-    document.documentElement.dataset.theme = state.settings.theme || 'green';
+    const next = state.settings.theme || 'green';
+    if (!document.documentElement.dataset.theme) { document.documentElement.dataset.theme = next; return; }
+    if (document.documentElement.dataset.theme === next) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (typeof document.startViewTransition === 'function' && !reduce) {
+      // 主题切换：整窗色彩交叉淡入，丝滑换装
+      document.startViewTransition(() => flushSync(() => { document.documentElement.dataset.theme = next; }));
+    } else document.documentElement.dataset.theme = next;
   }, [state.settings.theme]);
   const selected = state.instances.find((item) => item.id === state.settings.selectedInstanceId) || state.instances[0];
   const currentAccount = accounts.find((item) => item.id === currentAccountId) || accounts[0] || null;
   const activeDownloads = state.tasks.filter((task) => task.status === 'downloading').length;
-  const navigate = (next) => setPage(next);
+  const navigate = (next) => {
+    if (next === page) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (typeof document.startViewTransition === 'function' && !reduce) {
+      // 页面切换：旧页淡出上移、新页淡入升起
+      document.startViewTransition(() => flushSync(() => setPage(next)));
+    } else setPage(next);
+  };
   const selectInstance = async (id) => {
     await window.hcl.selectInstance(id);
     setState((old) => ({ ...old, settings: { ...old.settings, selectedInstanceId: id } }));
@@ -508,7 +522,7 @@ export default function App() {
       toast('游戏已启动，祝你玩得开心');
     } catch (e) {
       toast(e.message || '启动失败', 'error');
-      if (e.message?.includes('Java')) setPage('settings');
+      if (e.message?.includes('Java')) navigate('settings');
     } finally { setLaunching(false); }
   };
   const checkUpdates = async () => {
@@ -545,12 +559,12 @@ export default function App() {
     <main className="main-area"><div className="page-header"><div><h1>{PAGE_META[page][0]}</h1><p>{PAGE_META[page][1]}</p></div>{page === 'home' && <button className="current-instance" onClick={() => setInstanceModal(true)}><div className="current-instance-icon"><Gamepad2 size={18} /></div><div><span>当前实例</span><strong>{selected?.name || '尚未安装游戏'}</strong></div><ChevronDown size={16} /></button>}</div><div className="page-scroll">
       {page === 'home' && <HomePage instances={state.instances} selected={selected} settings={state.settings} tasks={state.tasks} onLaunch={launch} launching={launching} running={selected && running.includes(selected.id)} onNavigate={navigate} onManage={() => setInstanceModal(true)} onSelect={selectInstance} onOpenFolder={() => window.hcl.openFolder('games')} java={java} appVersion={state.appVersion} onCheckUpdates={checkUpdates} platform={state.platform} account={currentAccount} />}
       {page === 'versions' && <VersionsPage installed={state.instances} onInstall={install} installing={installing} settings={state.settings} />}
-      {(page === 'mods' || page === 'shaders') && <ResourceBrowser key={page} kind={page === 'mods' ? 'mod' : 'shader'} instances={state.instances} selected={selected} onDownload={downloadResource} onRequireInstance={() => selected ? setInstanceModal(true) : setPage('versions')} />}
+      {(page === 'mods' || page === 'shaders') && <ResourceBrowser key={page} kind={page === 'mods' ? 'mod' : 'shader'} instances={state.instances} selected={selected} onDownload={downloadResource} onRequireInstance={() => selected ? setInstanceModal(true) : navigate('versions')} />}
       {page === 'downloads' && <DownloadsPage tasks={state.tasks} onCancel={window.hcl.cancelTask} onOpenLog={() => window.hcl.openErrorLog()} onInstallUpdate={() => window.hcl.installUpdate()} onClear={async () => { const tasks = await window.hcl.clearTasks(); setState((old) => ({ ...old, tasks })); }} />}
       {page === 'network' && <NetworkPage toast={toast} settings={state.settings} />}
       {page === 'settings' && <SettingsPage settings={state.settings} dataRoot={state.dataRoot} appVersion={state.appVersion} platform={state.platform} onCheckUpdates={checkUpdates} onSave={saveSettings} onChooseJava={window.hcl.chooseJava} onChooseDirectory={window.hcl.chooseGameDirectory} onDetectJava={window.hcl.detectJava} java={java} setJava={setJava} onOpenRoot={() => window.hcl.openFolder('root')} toast={toast} accounts={accounts} currentAccountId={currentAccountId} refreshAccounts={refreshAccounts} />}
     </div></main>
-    {instanceModal && <InstanceModal instances={state.instances} selectedId={selected?.id} onClose={() => setInstanceModal(false)} onSelect={selectInstance} onDelete={deleteInstance} onOpenFolder={(id) => window.hcl.openFolder('instance', id)} onNew={() => setPage('versions')} />}
+    {instanceModal && <InstanceModal instances={state.instances} selectedId={selected?.id} onClose={() => setInstanceModal(false)} onSelect={selectInstance} onDelete={deleteInstance} onOpenFolder={(id) => window.hcl.openFolder('instance', id)} onNew={() => navigate('versions')} />}
     {updateInfo?.status === 'ready' && !updateBannerDismissed && <div className="update-banner">
       <div className="update-banner-icon"><Rocket size={20} /></div>
       <div className="update-banner-body"><strong>HCL v{updateInfo.version} 已就绪</strong><span>重启启动器即可完成安装，只需几秒钟</span></div>
