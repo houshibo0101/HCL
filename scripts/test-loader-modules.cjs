@@ -23,7 +23,7 @@ const pieces = [
   source.match(/function neoforgeInstallerPath[\s\S]*?\n}/)?.[0] || '',
 ].join('\n');
 
-// 桩：fetchJson
+// 桩：fetchJson / fetchText
 const stubs = `
 const fetchJsonLog = [];
 async function fetchJson(url) {
@@ -40,19 +40,39 @@ async function fetchJson(url) {
     ];
     throw new Error('404');
   }
+  if (url.includes('bmclapi2.bangbang93.com/forge/minecraft/')) {
+    return [
+      { mcversion: '1.20.1', version: '47.1.103' },
+      { mcversion: '1.20.1', version: '47.2.18' },
+      { mcversion: '1.20.1', version: '47.3.0' },
+    ];
+  }
+  if (url.includes('promotions_slim.json')) {
+    return { promos: { '1.20.1-recommended': '47.2.0', '1.20.1-latest': '47.3.0' } };
+  }
   if (url.includes('meta.quiltmc.org')) {
     return [{ loader: { version: '0.29.0' } }, { loader: { version: '0.28.1' } }];
   }
   throw new Error('unexpected url: ' + url);
 }
+async function fetchText(url) {
+  throw new Error('官方源不应被请求（镜像优先）: ' + url);
+}
 `;
 
 (async () => {
   // 注桩执行：把桩与函数体包进一个 async 工厂函数返回模块接口
-  const factoryCode = `(async function () {\n${stubs}\n${pieces}\nreturn { getNeoForgeBuilds, getQuiltLoaders, neoforgeInstallerPath };\n})`;
+  const factoryCode = `(async function () {\n${stubs}\n${pieces}\nreturn { getForgeBuilds, getNeoForgeBuilds, getQuiltLoaders, neoforgeInstallerPath, fetchJsonLog };\n})`;
   // eslint-disable-next-line no-eval
   const makeModule = eval(factoryCode);
   const m = await makeModule();
+  // Forge 镜像优先 + 推荐版本
+  const forge = await m.getForgeBuilds('1.20.1');
+  console.log('Forge 1.20.1 (via mirror):', JSON.stringify(forge));
+  if (forge.builds.length !== 3) throw new Error('Forge 构建数应为 3');
+  if (forge.builds[0].id !== '1.20.1-47.3.0') throw new Error('Forge 排序错误');
+  if (forge.recommended !== '47.2.0') throw new Error('Forge 推荐版本应来自镜像 promotions');
+  if (!m.fetchJsonLog.some((u) => u.includes('bmclapi2.bangbang93.com/forge/minecraft/'))) throw new Error('应先请求 BMCLAPI 镜像');
   // NeoForge 1.21.1（新格式）
   const nf21 = await m.getNeoForgeBuilds('1.21.1');
   console.log('NeoForge 1.21.1:', JSON.stringify(nf21));
@@ -73,5 +93,5 @@ async function fetchJson(url) {
   console.log('path old:', p2);
   if (p1 !== '/maven/net/neoforged/neoforge/21.1.57/neoforge-21.1.57-installer.jar') throw new Error('新格式路径映射错误');
   if (p2 !== '/maven/net/neoforged/forge/1.20.1-47.1.105/forge-1.20.1-47.1.105-installer.jar') throw new Error('旧格式路径映射错误');
-  console.log('\n✓ 全部通过：getNeoForgeBuilds / getQuiltLoaders / neoforgeInstallerPath');
+  console.log('\n✓ 全部通过：getForgeBuilds(镜像优先) / getNeoForgeBuilds / getQuiltLoaders / neoforgeInstallerPath');
 })().catch((e) => { console.error('✗ 失败:', e.message); process.exit(1); });

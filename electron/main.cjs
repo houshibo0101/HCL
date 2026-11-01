@@ -144,7 +144,7 @@ async function fetchJson(url, options = {}) {
     try {
       const response = await fetch(url, {
         ...options,
-        signal: options.signal || AbortSignal.timeout(30000),
+        signal: options.signal || AbortSignal.timeout(options.timeout || 30000),
         headers: { 'User-Agent': USER_AGENT, Accept: 'application/json', ...(options.headers || {}) },
       });
       if (!response.ok) throw new Error(`网络请求失败 (${response.status})：${new URL(url).hostname}`);
@@ -390,7 +390,7 @@ async function fetchText(url, options = {}) {
     try {
       const response = await fetch(url, {
         ...options,
-        signal: options.signal || AbortSignal.timeout(30000),
+        signal: options.signal || AbortSignal.timeout(options.timeout || 30000),
         headers: { 'User-Agent': USER_AGENT, ...(options.headers || {}) },
       });
       if (!response.ok) throw new Error(`网络请求失败 (${response.status})：${new URL(url).hostname}`);
@@ -416,34 +416,44 @@ function compareBuildDesc(a, b) {
 
 async function getForgeBuilds(mcVersion) {
   const prefix = `${mcVersion}-`;
+  // 国内镜像优先（BMCLAPI 实测亚秒级），官方源做兜底
   try {
-    const xml = await fetchText('https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml');
-    const builds = [...xml.matchAll(/<version>([^<]+)<\/version>/g)]
-      .map((m) => m[1])
-      .filter((id) => id.startsWith(prefix))
-      .map((id) => ({ id, build: id.slice(prefix.length) }))
+    const data = await fetchJson(`https://bmclapi2.bangbang93.com/forge/minecraft/${encodeURIComponent(mcVersion)}`);
+    if (!Array.isArray(data) || !data.length) throw new Error(`Forge 暂不支持 Minecraft ${mcVersion}`);
+    const builds = data
+      .map((item) => ({ id: `${item.mcversion}-${item.version}`, build: String(item.version) }))
+      .filter((item) => item.id.startsWith(prefix))
       .sort((a, b) => compareBuildDesc(a.build, b.build));
     if (!builds.length) throw new Error(`Forge 暂不支持 Minecraft ${mcVersion}`);
+    // 推荐版本也从镜像拿（BMCLAPI maven 路径代理官方 promotions）
     let recommended = null;
     let latest = null;
     try {
-      const promos = await fetchJson('https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json');
+      const promos = await fetchJson('https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/promotions_slim.json');
       recommended = promos.promos?.[`${mcVersion}-recommended`] || null;
       latest = promos.promos?.[`${mcVersion}-latest`] || recommended;
     } catch {}
     return { builds, recommended, latest };
-  } catch (error) {
-    // 国内网络兜底：BMCLAPI 镜像
+  } catch (mirrorError) {
+    // 官方源兜底（海外网络或镜像异常时）；8 秒快速超时避免干等
     try {
-      const data = await fetchJson(`https://bmclapi2.bangbang93.com/forge/minecraft/${encodeURIComponent(mcVersion)}`);
-      if (!Array.isArray(data) || !data.length) throw new Error(`Forge 暂不支持 Minecraft ${mcVersion}`);
-      const builds = data
-        .map((item) => ({ id: `${item.mcversion}-${item.version}`, build: String(item.version) }))
-        .filter((item) => item.id.startsWith(prefix))
+      const xml = await fetchText('https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml', { timeout: 8000 });
+      const builds = [...xml.matchAll(/<version>([^<]+)<\/version>/g)]
+        .map((m) => m[1])
+        .filter((id) => id.startsWith(prefix))
+        .map((id) => ({ id, build: id.slice(prefix.length) }))
         .sort((a, b) => compareBuildDesc(a.build, b.build));
-      return { builds, recommended: null, latest: null };
+      if (!builds.length) throw new Error(`Forge 暂不支持 Minecraft ${mcVersion}`);
+      let recommended = null;
+      let latest = null;
+      try {
+        const promos = await fetchJson('https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json', { timeout: 8000 });
+        recommended = promos.promos?.[`${mcVersion}-recommended`] || null;
+        latest = promos.promos?.[`${mcVersion}-latest`] || recommended;
+      } catch {}
+      return { builds, recommended, latest };
     } catch {
-      throw error;
+      throw mirrorError;
     }
   }
 }
