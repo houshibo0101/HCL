@@ -387,6 +387,24 @@ function SettingsPage({ settings, dataRoot, appVersion, platform, onCheckUpdates
     try { await onSave({ ...form, theme: id }); } catch {}
   };
   const save = async () => { setSaving(true); try { await onSave(form); } finally { setSaving(false); } };
+  const submitAuth = async () => {
+    if (authBusy) return;
+    setAuthBusy(true);
+    try {
+      if (authType === 'offline') {
+        if (!offlineName.trim()) throw new Error('请输入玩家名称');
+        await window.hcl.addOfflineAccount(offlineName.trim());
+        toast('离线账户已添加');
+      } else {
+        const root = customPreset === 'littleskin' ? 'https://littleskin.cn/api/yggdrasil' : customRoot;
+        if (!root || !/^https:\/\//.test(root)) throw new Error('请填写有效的 API 根地址（https:// 开头）');
+        const result = await window.hcl.loginAccount({ apiRoot: root, username: authUser, password: authPass });
+        toast(`欢迎，${result.name}！皮肤站账户登录成功`);
+      }
+      setAccountModal(false); setOfflineName(''); setAuthUser(''); setAuthPass('');
+    } catch (e) { toast(e.message || '操作失败', 'error'); }
+    finally { setAuthBusy(false); }
+  };
   return <div className="page settings-page">
     <div className="settings-layout"><div className="settings-main">
       <section className="settings-section"><div className="settings-title"><UserRound size={19} /><div><h2>玩家设置</h2><p>用于离线模式的游戏内显示名称</p></div></div><label className="field horizontal"><span>玩家名称</span><div><input value={form.username} maxLength={16} onChange={(e) => update('username', e.target.value)} /><small>建议使用 3–16 个字母、数字或下划线</small></div></label><div className="toggle-row"><div><strong>游戏语言自动设为简体中文</strong><span>每次启动前自动写入语言设置，新实例第一次进入游戏即为中文界面</span></div><button className={`switch ${form.autoChineseLang !== false ? 'on' : ''}`} onClick={async () => { update('autoChineseLang', form.autoChineseLang === false); try { await onSave({ ...form, autoChineseLang: form.autoChineseLang === false }); } catch {} }}><i /></button></div></section>
@@ -400,32 +418,26 @@ function SettingsPage({ settings, dataRoot, appVersion, platform, onCheckUpdates
       <section className="settings-section"><div className="settings-title"><Rocket size={19} /><div><h2>启动器更新</h2><p>自动检查新版本并在后台下载，重启后即可完成安装</p></div></div><div className="toggle-row"><div><strong>自动检查并下载更新</strong><span>开启后，启动时和运行中每 4 小时各检查一次；关闭后仍可在右侧关于卡片手动检查</span></div><button className={`switch ${form.autoUpdate !== false ? 'on' : ''}`} onClick={async () => { const next = form.autoUpdate === false; update('autoUpdate', next); try { await onSave({ ...form, autoUpdate: next }); } catch {} }}><i /></button></div></section>
       <button className="button primary save-settings" disabled={saving} onClick={save}>{saving ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}保存设置</button>
       {accountModal && <Modal title="添加游戏账户" subtitle="离线账户或皮肤站账户（Yggdrasil 外置登录）" onClose={() => setAccountModal(false)}>
-        <div className="segmented">{[['offline', '离线模式'], ['yggdrasil', '皮肤站账户']].map(([id, label]) => <button key={id} className={authType === id ? 'active' : ''} onClick={() => setAuthType(id)}>{label}</button>)}</div>
-        {authType === 'offline' ? <label className="field"><span>玩家名称</span><input value={offlineName} maxLength={16} placeholder="3–16 位字母、数字或下划线" onChange={(e) => setOfflineName(e.target.value)} /></label>
-        : <>
-          <label className="field"><span>认证服务器</span><select value={customPreset} onChange={(e) => setCustomPreset(e.target.value)}><option value="littleskin">LittleSkin（littleskin.cn）</option><option value="custom">自定义 Yggdrasil 服务器…</option></select></label>
-          {customPreset === 'custom' && <label className="field"><span>API 根地址</span><input value={customRoot} placeholder="https://example.com/api/yggdrasil" onChange={(e) => setCustomRoot(e.target.value)} /></label>}
-          <label className="field"><span>账号（邮箱 / 用户名）</span><input value={authUser} autoComplete="off" onChange={(e) => setAuthUser(e.target.value)} /></label>
-          <label className="field"><span>密码</span><input type="password" value={authPass} autoComplete="off" onChange={(e) => setAuthPass(e.target.value)} /></label>
-          <p className="net-note">使用皮肤站账号进入开启外置登录的在线服务器；尚未注册？先到 littleskin.cn 注册并创建角色。密码仅用于向认证服务器登录，不会保存在本机。</p>
-        </>}
-        <button className="button primary" disabled={authBusy} onClick={async () => {
-          setAuthBusy(true);
-          try {
-            if (authType === 'offline') {
-              if (!offlineName.trim()) throw new Error('请输入玩家名称');
-              await window.hcl.addOfflineAccount(offlineName.trim());
-              toast('离线账户已添加');
-            } else {
-              const root = customPreset === 'littleskin' ? 'https://littleskin.cn/api/yggdrasil' : customRoot;
-              if (!root || !/^https:\/\//.test(root)) throw new Error('请填写有效的 API 根地址（https:// 开头）');
-              const result = await window.hcl.loginAccount({ apiRoot: root, username: authUser, password: authPass });
-              toast(`欢迎，${result.name}！皮肤站账户登录成功`);
-            }
-            setAccountModal(false); setOfflineName(''); setAuthUser(''); setAuthPass('');
-          } catch (e) { toast(e.message || '操作失败', 'error'); }
-          finally { setAuthBusy(false); }
-        }}>{authBusy ? <LoaderCircle className="spin" size={17} /> : authType === 'offline' ? '创建离线账户' : '登录'}</button>
+        <div className="modal-body">
+          <div className="account-form">
+            <div className="segmented">{[['offline', '离线模式'], ['yggdrasil', '皮肤站账户']].map(([id, label]) => <button key={id} type="button" className={authType === id ? 'active' : ''} onClick={() => setAuthType(id)}>{label}</button>)}</div>
+            <form onSubmit={(e) => { e.preventDefault(); submitAuth(); }}>
+              {authType === 'offline' ? <label className="field"><span>玩家名称</span><input value={offlineName} maxLength={16} placeholder="3–16 位字母、数字或下划线" autoComplete="off" onChange={(e) => setOfflineName(e.target.value)} /></label>
+              : <>
+                <label className="field"><span>认证服务器</span><select value={customPreset} onChange={(e) => setCustomPreset(e.target.value)}><option value="littleskin">LittleSkin（littleskin.cn）</option><option value="custom">自定义 Yggdrasil 服务器…</option></select></label>
+                {customPreset === 'custom' && <label className="field"><span>API 根地址</span><input value={customRoot} placeholder="https://example.com/api/yggdrasil" autoComplete="off" onChange={(e) => setCustomRoot(e.target.value)} /></label>}
+                <label className="field"><span>账号（邮箱 / 用户名）</span><input value={authUser} autoComplete="username" onChange={(e) => setAuthUser(e.target.value)} /></label>
+                <label className="field"><span>密码</span><input type="password" value={authPass} autoComplete="current-password" onChange={(e) => setAuthPass(e.target.value)} /></label>
+                <p className="net-note">使用皮肤站账号进入开启外置登录的在线服务器；尚未注册？先到 littleskin.cn 注册并创建角色。密码仅用于向认证服务器登录，不会保存在本机。</p>
+              </>}
+              <button type="submit" className="hidden" disabled={authBusy} />
+            </form>
+          </div>
+        </div>
+        <footer className="modal-footer">
+          <span className="modal-hint">{authBusy ? '正在连接认证服务器…' : '回车或点击按钮提交'}</span>
+          <button className="button primary" disabled={authBusy} onClick={submitAuth}>{authBusy ? <LoaderCircle className="spin" size={17} /> : authType === 'offline' ? '创建离线账户' : '登录'}</button>
+        </footer>
       </Modal>}
     </div><aside className="settings-aside"><div className="about-card"><Logo /><div className="about-version"><span>版本 {appVersion || '1.6.1'}</span><span>{platform === 'darwin' ? 'macOS' : 'Windows'}</span><button className="check-update" onClick={onCheckUpdates}><RefreshCw size={12} />检查更新</button></div><p>一个简单、清爽的 Minecraft 启动器。专注于游戏与社区内容，不做多余的事情。</p><div className="about-features"><span><Check size={14} />官方游戏版本</span><span><Check size={14} />Modrinth 资源</span><span><Check size={14} />本地实例管理</span></div></div><div className="legal-note">Minecraft 是 Mojang Synergies AB 的商标。HCL 不是官方 Minecraft 产品，与 Mojang 或 Microsoft 无隶属关系。</div></aside></div>
   </div>;

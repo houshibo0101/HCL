@@ -383,6 +383,9 @@ html.theme-morphing, html.theme-morphing *, html.theme-morphing *::before, html.
 /* 设置页区块动作按钮（低调描边） */
 .section-action { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); background: transparent; color: #8f9d93; border-radius: 6px; font-size: 10px; padding: 6px 10px; flex-shrink: 0; transition: .16s; }
 .section-action:hover { border-color: rgba(var(--accent-rgb), .35); color: var(--green); background: rgba(var(--accent-rgb), .06); }
+/* 添加账户弹窗 */
+.account-form { display: flex; flex-direction: column; gap: 13px; }
+.hidden { display: none; }
 .task-meta { display: flex; justify-content: space-between; font-size: 8px; color: #68766c; }
 
 .settings-layout { display: grid; grid-template-columns: minmax(0, 1fr) 265px; gap: 20px; align-items: start; }
