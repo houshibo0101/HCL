@@ -1123,7 +1123,7 @@ function registerIpc() {
     settings.memory = Math.max(1024, Math.min(32768, Number(settings.memory) || 4096));
     await fsp.mkdir(settings.gameDirectory, { recursive: true });
     await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
-    scheduleUpdateChecks();
+    scheduleNextUpdateCheck(6000);
     return settings;
   });
   ipcMain.handle('versions:list', (_event, refresh) => getVersionManifest(refresh));
@@ -1335,23 +1335,43 @@ function registerIpc() {
 }
 
 let updateTaskId = null;
+let updateReadyVersion = null;
 let updateTimer = null;
-const UPDATE_CHECK_INTERVAL = 4 * 60 * 60 * 1000; // 运行中每 4 小时复查一次更新
+let updateRetryAttempts = 0;
+let lastUpdateCheckAt = 0;
+const UPDATE_CHECK_INTERVAL = 2 * 60 * 60 * 1000; // 正常每 2 小时复查一次
+const UPDATE_RETRY_BASE = 60 * 1000;              // 检查失败 1 分钟后重试
+const UPDATE_RETRY_MAX = 15 * 60 * 1000;          // 重试间隔上限 15 分钟
+const UPDATE_FOCUS_GAP = 10 * 60 * 1000;          // 窗口聚焦检查的最小间隔
 
 function canAutoUpdate() {
   return app.isPackaged && process.platform === 'win32' && settings.autoUpdate !== false;
 }
 
-function scheduleUpdateChecks() {
-  if (updateTimer) {
-    clearInterval(updateTimer);
-    updateTimer = null;
-  }
+function scheduleNextUpdateCheck(delay) {
+  if (updateTimer) clearTimeout(updateTimer);
+  updateTimer = null;
   if (!canAutoUpdate()) return;
-  updateTimer = setInterval(() => {
-    autoUpdater.checkForUpdates().catch(() => {});
-  }, UPDATE_CHECK_INTERVAL);
+  updateTimer = setTimeout(() => {
+    runAutoUpdateCheck().catch(() => {});
+  }, delay);
   updateTimer.unref?.();
+}
+
+async function runAutoUpdateCheck() {
+  if (!canAutoUpdate()) return;
+  if (updateTaskId) { scheduleNextUpdateCheck(UPDATE_CHECK_INTERVAL); return; } // 正在下载，不打断
+  if (updateReadyVersion) { scheduleNextUpdateCheck(UPDATE_CHECK_INTERVAL); return; } // 已就绪等重启，无需再查
+  lastUpdateCheckAt = Date.now();
+  try {
+    await autoUpdater.checkForUpdates();
+    updateRetryAttempts = 0;
+    scheduleNextUpdateCheck(UPDATE_CHECK_INTERVAL);
+  } catch {
+    updateRetryAttempts += 1;
+    // 网络不通时 1 分钟起步、逐次拉长（上限 15 分钟）自动重试，不再等 4 小时
+    scheduleNextUpdateCheck(Math.min(UPDATE_RETRY_BASE * updateRetryAttempts, UPDATE_RETRY_MAX));
+  }
 }
 
 function setupAutoUpdater() {
@@ -1372,6 +1392,7 @@ function setupAutoUpdater() {
     send('app:update', { status: 'downloading', percent: progress.percent });
   });
   autoUpdater.on('update-downloaded', (info) => {
+    updateReadyVersion = info.version;
     if (updateTaskId) {
       finishTask(updateTaskId, 'completed', `v${info.version} 已就绪，重启应用后自动安装`);
       updateTaskId = null;
@@ -1425,6 +1446,10 @@ function createWindow() {
     shell.openExternal(url);
     return { action: 'deny' };
   });
+  mainWindow.on('focus', () => {
+    // 用户每次切回窗口都会顺手查一次更新（限流 10 分钟），不依赖固定周期
+    if (Date.now() - lastUpdateCheckAt > UPDATE_FOCUS_GAP) runAutoUpdateCheck().catch(() => {});
+  });
 }
 
 app.whenReady().then(async () => {
@@ -1438,7 +1463,7 @@ app.whenReady().then(async () => {
         autoUpdater.checkForUpdates().catch(() => {});
       }, 6000);
     }
-    scheduleUpdateChecks();
+    scheduleNextUpdateCheck(6000);
   }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

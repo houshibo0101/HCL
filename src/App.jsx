@@ -434,7 +434,7 @@ function InstanceModal({ instances, selectedId, onClose, onSelect, onDelete, onO
 
 export default function App() {
   const [page, setPage] = useState('home');
-  const [state, setState] = useState({ settings: { username: 'Player', memory: 4096 }, instances: [], tasks: [], dataRoot: 'D:\\HCL\\data', appVersion: '1.6.1', platform: 'win32' });
+  const [state, setState] = useState({ settings: { username: 'Player', memory: 4096 }, instances: [], tasks: [], dataRoot: 'D:\\HCL\\data', appVersion: '1.6.5', platform: 'win32' });
   const [ready, setReady] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [instanceModal, setInstanceModal] = useState(false);
@@ -539,7 +539,9 @@ export default function App() {
         ? <div className="sidebar-version ready" title="重启后自动完成安装" onClick={() => window.hcl.installUpdate()}>v{updateInfo.version} 已就绪 <span>•</span> 点击重启安装</div>
         : updateInfo?.status === 'downloading'
           ? <div className="sidebar-version" title="新版本正在后台下载">正在下载更新 {Math.floor(updateInfo.percent || 0)}%</div>
-          : <div className="sidebar-version" title="点击检查启动器更新" onClick={checkUpdates}>HCL v{state.appVersion || '1.6.1'} <span>•</span> 点击检查更新</div>}</div></aside>
+          : updateInfo?.status === 'error'
+            ? <div className="sidebar-version error" title="点击重试检查更新" onClick={checkUpdates}>更新检查失败 <span>•</span> 点击重试</div>
+            : <div className="sidebar-version" title="点击检查启动器更新" onClick={checkUpdates}>HCL v{state.appVersion || '1.6.5'} <span>•</span> 点击检查更新</div>}</div></aside>
     <main className="main-area"><div className="page-header"><div><h1>{PAGE_META[page][0]}</h1><p>{PAGE_META[page][1]}</p></div>{page === 'home' && <button className="current-instance" onClick={() => setInstanceModal(true)}><div className="current-instance-icon"><Gamepad2 size={18} /></div><div><span>当前实例</span><strong>{selected?.name || '尚未安装游戏'}</strong></div><ChevronDown size={16} /></button>}</div><div className="page-scroll">
       {page === 'home' && <HomePage instances={state.instances} selected={selected} settings={state.settings} tasks={state.tasks} onLaunch={launch} launching={launching} running={selected && running.includes(selected.id)} onNavigate={navigate} onManage={() => setInstanceModal(true)} onSelect={selectInstance} onOpenFolder={() => window.hcl.openFolder('games')} java={java} appVersion={state.appVersion} onCheckUpdates={checkUpdates} platform={state.platform} account={currentAccount} />}
       {page === 'versions' && <VersionsPage installed={state.instances} onInstall={install} installing={installing} settings={state.settings} />}
