@@ -32,6 +32,7 @@ const defaultSettings = () => ({
   selectedInstanceId: null,
   closeOnLaunch: false,
   theme: 'green',
+  autoChineseLang: true,
 });
 
 const THEME_BACKGROUNDS = {
@@ -670,6 +671,30 @@ function argumentValues(items, features = {}) {
   return values;
 }
 
+function legacyLangCode(versionId) {
+  const m = String(versionId).match(/1\.(\d+)/);
+  return (m && Number(m[1]) <= 12) ? 'zh_CN' : 'zh_cn';
+}
+
+async function ensureGameLanguage(gameDir, versionId) {
+  // 与 PCL2/HMCL 一致：启动前把实例 options.txt 的语言写为简体中文，新实例首次进入即为中文界面
+  if (settings.autoChineseLang === false) return;
+  try {
+    const optionsPath = path.join(gameDir, 'options.txt');
+    let content = '';
+    try {
+      content = await fsp.readFile(optionsPath, 'utf8');
+    } catch {}
+    const langLine = `lang:${legacyLangCode(versionId)}`;
+    if (/(^|\n)lang:[^\n]*/i.test(content)) {
+      content = content.replace(/(^|\n)lang:[^\n]*/i, (m, p1) => `${p1}${langLine}`);
+    } else {
+      content = `${langLine}\n${content}`;
+    }
+    await fsp.writeFile(optionsPath, content, 'utf8');
+  } catch {}
+}
+
 async function launchGame(instanceId) {
   const instance = instances.find((item) => item.id === instanceId);
   if (!instance) throw new Error('请先选择游戏实例');
@@ -736,6 +761,7 @@ async function launchGame(instanceId) {
   if (!mainClass) throw new Error('版本信息中缺少启动类');
   const gameArgs = meta.arguments?.game ? argumentValues(meta.arguments.game) : (meta.minecraftArguments || '').split(' ');
   const args = [...replaceArgs(jvmArgs), mainClass, ...replaceArgs(gameArgs)].filter(Boolean);
+  await ensureGameLanguage(gameDir, instance.version);
   const child = spawn(java.path, args, { cwd: gameDir, windowsHide: false });
   gameProcesses.set(instanceId, child);
   instance.lastPlayed = Date.now();
