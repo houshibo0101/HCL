@@ -397,6 +397,12 @@ select:hover { border-color: #3c4b40; }
 .net-steps li svg { color: var(--green); }
 .net-steps .text-button { margin-left: auto; }
 .net-log { background: #0c110d; border: 1px solid var(--border); border-radius: 7px; padding: 10px; max-height: 180px; overflow-y: auto; font-family: Consolas, monospace; font-size: 9px; color: #8fa095; line-height: 1.6; margin-top: 12px; }
+.net-input-row { margin-top: 9px; }
+.net-input-row input { width: 100%; background: #0c110d; border: 1px solid var(--border); border-radius: 7px; padding: 9px 11px; color: var(--text); font-size: 10px; font-family: Consolas, monospace; outline: none; }
+.net-input-row input:focus { border-color: var(--accent-dim-a); }
+.tunnel-address { display: flex; align-items: center; gap: 9px; margin-top: 13px; background: rgba(var(--accent-rgb), .1); border: 1px solid var(--accent-dim-a); border-radius: 9px; padding: 10px 13px; }
+.tunnel-address svg { color: var(--green); flex-shrink: 0; }
+.tunnel-address code { flex: 1; font-family: Consolas, monospace; font-size: 12px; color: var(--green); letter-spacing: .3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stop-btn { color: #e49a9a; margin-top: 10px; }
 .path-input { display: flex; gap: 7px; }
 .path-input input { flex: 1; }

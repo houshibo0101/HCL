@@ -484,12 +484,39 @@ async function detectProxyJvmArgs() {
   }
 }
 
-let playitChild = null;
+let cpolarChild = null;
+const CPOLAR_WEB_PORT = 14040;
+const CPOLAR_VERSION = '3.3.12';
+const CPOLAR_ZIP_URLS = [
+  `https://www.cpolar.com/static/downloads/releases/${CPOLAR_VERSION}/cpolar-stable-windows-amd64-setup.zip`,
+  `http://www.cpolar.com/static/downloads/releases/${CPOLAR_VERSION}/cpolar-stable-windows-amd64-setup.zip`,
+];
 
-function sendPlayitOutput(text) {
-  const match = text.match(/https:\/\/playit\.gg\/claim\/[A-Za-z0-9_-]+/);
-  if (match) send('net:playit-claim', { url: match[0] });
-  send('net:playit-log', { text });
+const cpolarExePath = () => path.join(DATA_ROOT, 'tools', 'cpolar', 'cpolar.exe');
+const cpolarConfigPath = () => path.join(DATA_ROOT, 'tools', 'cpolar', 'cpolar-hcl.yml');
+
+function sendCpolarOutput(text) {
+  const match = text.match(/tcp:\/\/([a-z0-9.-]+):(\d{2,5})/i);
+  if (match) send('net:cpolar-address', { address: `${match[1]}:${match[2]}` });
+  send('net:cpolar-log', { text });
+}
+
+async function pollCpolarAddress() {
+  for (let i = 0; i < 20; i++) {
+    if (!cpolarChild) return;
+    try {
+      const res = await fetch(`http://127.0.0.1:${CPOLAR_WEB_PORT}/api/tunnels`);
+      if (res.ok) {
+        const data = await res.json();
+        const tunnel = (data.tunnels || []).find((item) => (item.public_url || '').startsWith('tcp://'));
+        if (tunnel) {
+          send('net:cpolar-address', { address: tunnel.public_url.replace('tcp://', '') });
+          return;
+        }
+      }
+    } catch { /* cpolar web API 未就绪，继续等 */ }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
 }
 
 async function installVersion(version, name, loader = 'Vanilla', forgeId = null) {
@@ -1019,36 +1046,72 @@ function registerIpc() {
     }
     return result;
   });
-  ipcMain.handle('net:download-playit', async () => {
-    const dest = path.join(DATA_ROOT, 'tools', 'playit-agent.exe');
-    if (fs.existsSync(dest) && fs.statSync(dest).size > 5000000) return { path: dest, skipped: true };
-    const info = await fetchJson('https://api.github.com/repos/playit-cloud/playit-agent/releases/latest');
-    const asset = (info.assets || []).find((a) => /windows.*x86_64\.exe$/i.test(a.name)) || (info.assets || []).find((a) => a.name.endsWith('.exe'));
-    if (!asset) throw new Error('未找到 playit 代理程序');
-    await downloadFile([asset.browser_download_url, `https://ghproxy.net/${asset.browser_download_url}`], dest, { expectedSize: asset.size || 0 });
-    return { path: dest };
-  });
-  ipcMain.handle('net:start-playit', () => {
-    if (playitChild) return { running: true };
-    const exe = path.join(DATA_ROOT, 'tools', 'playit-agent.exe');
-    if (!fs.existsSync(exe)) throw new Error('请先下载代理程序');
-    playitChild = spawn(exe, [], { windowsHide: true });
-    playitChild.stdout.on('data', (data) => sendPlayitOutput(data.toString()));
-    playitChild.stderr.on('data', (data) => sendPlayitOutput(data.toString()));
-    playitChild.on('exit', () => {
-      playitChild = null;
-      send('net:playit-log', { text: '—— 隧道代理已停止 ——' });
+  ipcMain.handle('net:cpolar-status', () => ({ downloaded: fs.existsSync(cpolarExePath()), running: Boolean(cpolarChild) }));
+  ipcMain.handle('net:download-cpolar', async () => {
+    const dir = path.join(DATA_ROOT, 'tools', 'cpolar');
+    const exe = cpolarExePath();
+    if (fs.existsSync(exe) && fs.statSync(exe).size > 5000000) return { path: exe, skipped: true };
+    // 已安装过 cpolar 官方客户端时直接复用
+    for (const systemPath of ['C:\\Program Files\\cpolar\\cpolar.exe', 'C:\\Program Files (x86)\\cpolar\\cpolar.exe']) {
+      if (fs.existsSync(systemPath) && fs.statSync(systemPath).size > 5000000) {
+        await fsp.mkdir(dir, { recursive: true });
+        await fsp.copyFile(systemPath, exe);
+        return { path: exe, copied: true };
+      }
+    }
+    await fsp.mkdir(dir, { recursive: true });
+    const zipPath = path.join(dir, 'cpolar.zip');
+    const msiPath = path.join(dir, 'cpolar.msi');
+    const extractDir = path.join(dir, 'extract');
+    await downloadFile(CPOLAR_ZIP_URLS, zipPath);
+    const zip = new AdmZip(zipPath);
+    const msiEntry = zip.getEntries().find((entry) => entry.entryName.toLowerCase().endsWith('.msi'));
+    if (!msiEntry) throw new Error('cpolar 安装包结构异常');
+    zip.extractEntryTo(msiEntry, dir, false, true);
+    await fsp.mkdir(extractDir, { recursive: true });
+    // msiexec /a 管理解包：只解出文件，不安装系统服务，无需管理员权限
+    await new Promise((resolve, reject) => {
+      const child = spawn('msiexec', ['/a', msiPath, '/qn', `TARGETDIR=${extractDir}`], { windowsHide: true });
+      child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`解包 cpolar 失败（代码 ${code}）`)));
+      child.on('error', reject);
     });
+    const extracted = path.join(extractDir, 'cpolar', 'cpolar.exe');
+    if (!fs.existsSync(extracted)) throw new Error('解包后未找到 cpolar 程序');
+    await fsp.copyFile(extracted, exe);
+    await Promise.allSettled([
+      fsp.unlink(zipPath), fsp.unlink(msiPath),
+      fsp.rm(extractDir, { recursive: true, force: true }),
+    ]);
+    return { path: exe };
+  });
+  ipcMain.handle('net:start-cpolar', async (_event, port, token) => {
+    if (cpolarChild) return { running: true };
+    const exe = cpolarExePath();
+    if (!fs.existsSync(exe)) throw new Error('请先下载 cpolar 隧道程序');
+    const trimmed = String(token || '').trim() || String(settings.cpolarAuthToken || '').trim();
+    if (!trimmed) throw new Error('请先到 cpolar 官网注册并填写 authtoken');
+    settings.cpolarAuthToken = trimmed;
+    await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    await fsp.writeFile(cpolarConfigPath(), `authtoken: ${trimmed}\nweb_addr: 127.0.0.1:${CPOLAR_WEB_PORT}\n`, 'utf8');
+    const localPort = Math.min(65535, Math.max(1024, parseInt(port, 10) || 25565));
+    cpolarChild = spawn(exe, ['tcp', String(localPort), `-config=${cpolarConfigPath()}`, '-log=stdout'], { windowsHide: true });
+    cpolarChild.stdout.on('data', (data) => sendCpolarOutput(data.toString()));
+    cpolarChild.stderr.on('data', (data) => sendCpolarOutput(data.toString()));
+    cpolarChild.on('exit', () => {
+      cpolarChild = null;
+      send('net:cpolar-log', { text: '—— 隧道已停止 ——' });
+    });
+    pollCpolarAddress().catch(() => {});
     return { running: true };
   });
-  ipcMain.handle('net:stop-playit', () => {
-    if (playitChild) {
-      playitChild.kill();
-      playitChild = null;
+  ipcMain.handle('net:stop-cpolar', () => {
+    if (cpolarChild) {
+      cpolarChild.kill();
+      cpolarChild = null;
     }
     return true;
   });
-  ipcMain.handle('net:open-console', () => shell.openExternal('https://playit.gg/servers'));
+  ipcMain.handle('net:open-cpolar', () => shell.openExternal('https://dashboard.cpolar.com/get-started'));
   ipcMain.handle('modrinth:search', (_event, options) => searchModrinth(options));
   ipcMain.handle('modrinth:versions', (_event, projectId, options) => projectVersions(projectId, options));
   ipcMain.handle('modrinth:download', (_event, resource) => downloadResource(resource));
@@ -1230,6 +1293,13 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on('before-quit', () => {
+  if (cpolarChild) {
+    cpolarChild.kill();
+    cpolarChild = null;
+  }
 });
 
 app.on('window-all-closed', () => {
