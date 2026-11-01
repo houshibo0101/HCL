@@ -163,6 +163,40 @@ function VersionsPage({ installed, onInstall, installing, settings }) {
     }).catch((error) => active && setForgeBuilds({ builds: [], error: error.message }));
     return () => { active = false; };
   }, [installTarget, loader]);
+  // 安装配置视图：点击「安装」后页面整体切换到独立的安装选项页（不再用弹窗）
+  if (installTarget) return <div className="page install-page">
+    <button className="text-button back" onClick={() => !installing && setInstallTarget(null)}><ChevronRight size={15} />返回版本列表</button>
+    <div className="install-hero">
+      <div className={`version-icon ${installTarget.type} large`}><Box size={34} /></div>
+      <div>
+        <h2>创建游戏实例</h2>
+        <p>Minecraft {installTarget.id} · {TYPE_LABELS[installTarget.type]} · 按下面步骤完成安装选项</p>
+      </div>
+    </div>
+    <div className="install-layout">
+      <section className="install-card">
+        <label className="field"><span>实例名称</span><input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} autoFocus /></label>
+        <div className="loader-field"><span>运行加载器</span><div className="loader-options three"><button className={loader === 'Vanilla' ? 'selected' : ''} onClick={() => setLoader('Vanilla')}><Box size={18} /><div><strong>原版</strong><small>纯净体验</small></div>{loader === 'Vanilla' && <Check size={14} />}</button><button className={loader === 'Fabric' ? 'selected' : ''} onClick={() => setLoader('Fabric')}><Layers3 size={18} /><div><strong>Fabric</strong><small>轻量，支持 Iris 光影</small></div>{loader === 'Fabric' && <Check size={14} />}</button><button className={loader === 'Forge' ? 'selected' : ''} onClick={() => setLoader('Forge')}><Package size={18} /><div><strong>Forge</strong><small>模组生态最全</small></div>{loader === 'Forge' && <Check size={14} />}</button></div></div>
+        {loader === 'Forge' && <div className="forge-picker">{forgeBuilds === null ? <span className="forge-loading"><LoaderCircle className="spin" size={14} />正在获取 Forge 版本列表…</span> : forgeBuilds.error ? <span className="forge-error"><AlertCircle size={14} />{forgeBuilds.error}</span> : <label className="field"><span>Forge 版本{forgeBuilds.recommended ? '（已推荐）' : ''}</span><select value={forgeId} onChange={(e) => setForgeId(e.target.value)}>{forgeBuilds.builds.map((build) => <option key={build.id} value={build.id}>{build.build}{build.build === forgeBuilds.recommended ? ' · 推荐' : ''}{build.build === forgeBuilds.latest && build.build !== forgeBuilds.recommended ? ' · 最新' : ''}</option>)}</select></label>}</div>}
+        <div className="install-summary"><div><Box size={19} /><span>游戏版本<strong>{installTarget.id} · {loader}</strong></span></div><div><HardDrive size={19} /><span>安装位置<strong>{settings?.gameDirectory || 'D:\\HCL\\data\\games'}</strong></span></div></div>
+        <p className="modal-hint"><Info size={14} />客户端、资源文件和运行库将一并下载，所需空间因版本而异。安装进度可在「下载管理」查看。</p>
+        <div className="install-actions">
+          <button className="button ghost" onClick={() => setInstallTarget(null)} disabled={installing}>取消</button>
+          <button className="button primary" disabled={!name.trim() || installing || (loader === 'Forge' && (!forgeId || !forgeBuilds || forgeBuilds.error))} onClick={() => { onInstall(installTarget, name, loader, forgeId).catch(() => {}); setInstallTarget(null); }}>{installing ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{installing ? '正在创建…' : '开始安装'}</button>
+        </div>
+      </section>
+      <aside className="install-side">
+        <h3>安装后你会得到</h3>
+        <ul>
+          <li><Box size={15} />一个独立的游戏实例，与现有版本互不干扰</li>
+          <li><HardDrive size={15} />独立的 mods / saves / shaderpacks 文件夹</li>
+          <li><ShieldCheck size={15} />数据全部保留在本地，随附完整卸载方式</li>
+        </ul>
+        <div className="install-side-tip"><Info size={14} /><span>加载器可以装完再换吗？——每个实例的加载器在创建时确定，想换加载器再建一个新实例即可，实例之间完全隔离。</span></div>
+      </aside>
+    </div>
+    <p className="modal-hint install-dismiss-hint"><Info size={14} />确认选项后点「开始安装」，页面会自动返回版本列表，下载进度在「下载管理」页实时可见。</p>
+  </div>;
   return <div className="page versions-page">
     <div className="page-toolbar"><div className="search-box"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索版本，例如 1.21.1" />{query && <button onClick={() => setQuery('')}><X size={15} /></button>}</div><button className="button secondary small" onClick={() => load(true)} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''} />刷新清单</button></div>
     <div className="filter-row"><div className="segmented">{[['release', '正式版'], ['snapshot', '快照'], ['old_beta', 'Beta'], ['old_alpha', 'Alpha'], ['all', '全部']].map(([id, label]) => <button key={id} className={filter === id ? 'active' : ''} onClick={() => setFilter(id)}>{label}</button>)}</div><span className="result-count">{filtered.length} 个版本</span></div>
@@ -179,11 +213,6 @@ function VersionsPage({ installed, onInstall, installing, settings }) {
       {!filtered.length && <EmptyState icon={Search} title="没有找到这个版本" text="试试其他版本号或切换版本类型。" />}
       {filtered.length > limit && <button className="load-more" onClick={() => setLimit(limit + 30)}>显示更多版本<ChevronDown size={16} /></button>}
     </>}
-    {installTarget && <Modal title="创建游戏实例" subtitle={`Minecraft ${installTarget.id} · ${TYPE_LABELS[installTarget.type]}`} onClose={() => !installing && setInstallTarget(null)}>
-      <div className="modal-body"><label className="field"><span>实例名称</span><input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} autoFocus /></label><div className="loader-field"><span>运行加载器</span><div className="loader-options three"><button className={loader === 'Vanilla' ? 'selected' : ''} onClick={() => setLoader('Vanilla')}><Box size={18} /><div><strong>原版</strong><small>纯净体验</small></div>{loader === 'Vanilla' && <Check size={14} />}</button><button className={loader === 'Fabric' ? 'selected' : ''} onClick={() => setLoader('Fabric')}><Layers3 size={18} /><div><strong>Fabric</strong><small>轻量，支持 Iris 光影</small></div>{loader === 'Fabric' && <Check size={14} />}</button><button className={loader === 'Forge' ? 'selected' : ''} onClick={() => setLoader('Forge')}><Package size={18} /><div><strong>Forge</strong><small>模组生态最全</small></div>{loader === 'Forge' && <Check size={14} />}</button></div></div>
-      {loader === 'Forge' && <div className="forge-picker">{forgeBuilds === null ? <span className="forge-loading"><LoaderCircle className="spin" size={14} />正在获取 Forge 版本列表…</span> : forgeBuilds.error ? <span className="forge-error"><AlertCircle size={14} />{forgeBuilds.error}</span> : <label className="field"><span>Forge 版本{forgeBuilds.recommended ? '（已推荐）' : ''}</span><select value={forgeId} onChange={(e) => setForgeId(e.target.value)}>{forgeBuilds.builds.map((build) => <option key={build.id} value={build.id}>{build.build}{build.build === forgeBuilds.recommended ? ' · 推荐' : ''}{build.build === forgeBuilds.latest && build.build !== forgeBuilds.recommended ? ' · 最新' : ''}</option>)}</select></label>}</div>}<div className="install-summary"><div><Box size={19} /><span>游戏版本<strong>{installTarget.id} · {loader}</strong></span></div><div><HardDrive size={19} /><span>安装位置<strong>{settings?.gameDirectory || 'D:\\HCL\\data\\games'}</strong></span></div></div><p className="modal-hint"><Info size={14} />客户端、资源文件和运行库将一并下载，所需空间因版本而异。</p></div>
-      <footer className="modal-footer"><button className="button ghost" onClick={() => setInstallTarget(null)} disabled={installing}>取消</button><button className="button primary" disabled={!name.trim() || installing || (loader === 'Forge' && (!forgeId || !forgeBuilds || forgeBuilds.error))} onClick={() => { onInstall(installTarget, name, loader, forgeId).catch(() => {}); setInstallTarget(null); }}>{installing ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{installing ? '正在创建…' : '开始安装'}</button></footer>
-    </Modal>}
   </div>;
 }
 

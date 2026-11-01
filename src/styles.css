@@ -553,7 +553,7 @@ html.theme-morphing, html.theme-morphing *, html.theme-morphing *::before, html.
 .instance-select span { color: var(--muted); font-size: 9px; }
 .instance-select small { color: #637168; font-size: 8px; }
 .current-tag { margin-left: auto; color: var(--green) !important; background: rgba(123,218,140,.08); padding: 3px 6px; border-radius: 4px; font-size: 8px !important; }
-.instance-row-actions { display: flex; padding-right: 9px; }
+.instance-row-actions { display: flex; gap: 2px; padding-right: 9px; }
 
 .empty-state { min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: var(--muted); }
 .empty-icon { width: 56px; height: 56px; display: grid; place-items: center; border-radius: 14px; background: #1a241c; color: #728779; margin-bottom: 14px; }
@@ -611,3 +611,24 @@ html.theme-morphing, html.theme-morphing *, html.theme-morphing *::before, html.
   .page-scroll, .page-header { padding-left: 24px; padding-right: 24px; }
   .settings-layout { grid-template-columns: minmax(0, 1fr) 225px; }
 }
+
+/* ===== 安装选项独立页（v1.7.8：从弹窗改为整页） ===== */
+.install-page .text-button.back { margin-bottom: 14px; font-size: 12px; }
+.install-page .text-button.back svg { transform: scaleX(-1); }
+.install-hero { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; animation: rise-in .3s cubic-bezier(.22,.61,.36,1) both; }
+.install-hero .version-icon.large { width: 60px; height: 66px; border-radius: 12px; }
+.install-hero h2 { font-size: 17px; color: var(--text); }
+.install-hero p { color: var(--muted); font-size: 10px; margin-top: 5px; }
+.install-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; align-items: start; animation: rise-in .3s .04s cubic-bezier(.22,.61,.36,1) both; }
+.install-card { border: 1px solid var(--border); border-radius: 12px; background: var(--panel-1); padding: 22px; }
+.install-card .field > span { font-size: 10px; }
+.install-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.install-side { border: 1px solid var(--border); border-radius: 12px; background: var(--panel-1); padding: 18px; }
+.install-side h3 { font-size: 11px; color: var(--text); margin-bottom: 12px; }
+.install-side ul { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.install-side li { display: flex; align-items: flex-start; gap: 8px; color: var(--muted); font-size: 9.5px; line-height: 1.55; }
+.install-side li svg { color: var(--green); flex-shrink: 0; margin-top: 1px; }
+.install-side-tip { display: flex; gap: 7px; margin-top: 14px; padding: 10px; border: 1px dashed var(--border-strong); border-radius: 8px; background: rgba(255,255,255,.015); color: var(--muted); font-size: 9px; line-height: 1.6; }
+.install-side-tip svg { color: var(--muted); flex-shrink: 0; }
+.install-dismiss-hint { margin-top: 4px; }
+@media (max-width: 1080px) { .install-layout { grid-template-columns: 1fr; } }
