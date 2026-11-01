@@ -36,6 +36,7 @@ const defaultSettings = () => ({
   theme: 'green',
   autoChineseLang: true,
   autoUpdate: true,
+  autoDownloadJava: true,
 });
 
 const THEME_BACKGROUNDS = {
@@ -610,9 +611,17 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
         }
       }
       if (installerError) throw installerError;
-      const java = await detectJava();
-      if (!java.found) {
-        const error = new Error('安装 Forge 需要先安装 Java，请到“设置 → Java 环境”配置');
+      let java;
+      const need = requiredJavaMajorFallback(version.id);
+      const usable = (await listJavas()).filter((item) => item.major >= need);
+      if (usable.length) java = usable.sort((a, b) => a.major - b.major)[0];
+      else if (settings.autoDownloadJava !== false) {
+        updateTask(taskId, { detail: `未找到 Java ${need}，正在自动下载…` });
+        await downloadJavaRuntime(pickDownloadMajor(need));
+        java = (await listJavas()).filter((item) => item.major >= need).sort((a, b) => a.major - b.major)[0];
+      }
+      if (!java) {
+        const error = new Error(`安装 Forge 需要先安装 Java ${need}，请到“设置 → Java 环境”配置或开启自动下载`);
         error.code = 'NO_JAVA';
         throw error;
       }
@@ -710,10 +719,24 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null)
   }
 }
 
-async function detectJava() {
+async function listJavas() {
   const executableName = process.platform === 'win32' ? 'java.exe' : 'java';
   const candidates = [];
   if (settings.javaPath) candidates.push(settings.javaPath);
+  // 启动器托管运行时（自动下载的 Java）
+  try {
+    for (const entry of await fsp.readdir(JAVA_MANAGED_ROOT, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const dir = path.join(JAVA_MANAGED_ROOT, entry.name);
+      candidates.push(path.join(dir, 'bin', executableName));
+      candidates.push(path.join(dir, 'Contents', 'Home', 'bin', executableName));
+      try {
+        for (const sub of await fsp.readdir(dir, { withFileTypes: true })) {
+          if (sub.isDirectory()) candidates.push(path.join(dir, sub.name, 'bin', executableName));
+        }
+      } catch {}
+    }
+  } catch {}
   if (process.env.JAVA_HOME) candidates.push(path.join(process.env.JAVA_HOME, 'bin', executableName));
   if (process.platform === 'darwin') {
     const macRoots = ['/Library/Java/JavaVirtualMachines', path.join(os.homedir(), 'Library', 'Java', 'JavaVirtualMachines')];
@@ -756,10 +779,141 @@ async function detectJava() {
           resolve(match?.[1] || stderr.split('\n')[0] || '未知版本');
         });
       });
-      return { found: true, path: candidate, version };
+      results.push({ path: candidate, version, major: parseJavaMajor(version) });
     } catch {}
   }
-  return { found: false, path: '', version: '' };
+  const seen = new Set();
+  return results.filter((item) => (seen.has(item.path) ? false : seen.add(item.path)));
+}
+
+async function detectJava() {
+  const list = await listJavas();
+  if (!list.length) return { found: false, path: '', version: '', major: 0 };
+  return { found: true, ...list[0] };
+}
+
+// ---------- Java 自动匹配与下载 ----------
+
+const JAVA_MANAGED_ROOT = path.join(DATA_ROOT, 'runtime');
+
+function parseJavaMajor(version) {
+  const m = String(version).match(/^(1\.)?(\d+)/);
+  if (!m) return 0;
+  return m[1] ? Number(m[2]) : Number(m[1]); // "1.8.0_402" → 8，"21.0.5" → 21
+}
+
+function requiredJavaMajorFallback(versionId) {
+  const m = String(versionId).match(/^1\.(\d+)(?:\.(\d+))?/);
+  if (!m) return 8;
+  const minor = Number(m[1]);
+  const patch = Number(m[2] || 0);
+  if (minor <= 16) return 8;                 // ≤ 1.16.5
+  if (minor === 17) return 17;               // 1.17（官方 16，17 兼容）
+  if (minor <= 20 && patch < 5) return 17;   // 1.18 – 1.20.4
+  return 21;                                 // 1.20.5+ / 1.21+
+}
+
+async function requiredJavaMajor(instance) {
+  try {
+    let meta = JSON.parse(await fsp.readFile(path.join(instance.versionDir, `${instance.runtimeVersion || instance.version}.json`), 'utf8'));
+    while (meta && !meta.javaVersion && meta.inheritsFrom) {
+      const parentId = String(meta.inheritsFrom);
+      if (/[\\/]+|\.\./.test(parentId)) break;
+      meta = JSON.parse(await fsp.readFile(path.join(instance.versionDir, '..', parentId, `${parentId}.json`), 'utf8'));
+    }
+    if (meta?.javaVersion?.majorVersion) return meta.javaVersion.majorVersion;
+  } catch {}
+  return requiredJavaMajorFallback(instance.version);
+}
+
+function pickDownloadMajor(required) {
+  if (required <= 8) return 8;
+  if (required <= 11) return 11;
+  if (required <= 17) return 17; // 含 16：Adoptium 无 16，17 兼容
+  return 21;                     // 18+ 及 21+ 快照尽力给 21
+}
+
+async function downloadJavaRuntime(major) {
+  const taskId = createTask('java', `下载 Java ${major} 运行时`);
+  try {
+    const osName = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'mac' : 'linux';
+    const archName = process.arch === 'arm64' ? 'aarch64' : 'x64';
+    updateTask(taskId, { detail: '正在查询 Adoptium 版本信息…', progress: 2 });
+    const info = await fetchJson(`https://api.adoptium.net/v3/assets/latest/${major}/hotspot?architecture=${archName}&image_type=jre&os=${osName}&project=jdk`);
+    const asset = Array.isArray(info) ? info.find((item) => item?.binary?.package?.link) : null;
+    if (!asset) throw new Error(`未找到 Java ${major} 运行时（Adoptium）`);
+    const packageName = asset.binary.package.name;
+    const links = [];
+    if (osName === 'windows' || osName === 'mac') {
+      links.push(`https://mirrors.tuna.tsinghua.edu.cn/Adoptium/${major}/jre/${archName}/${osName}/${packageName}`);
+    }
+    links.push(asset.binary.package.link, `https://ghproxy.net/${asset.binary.package.link}`);
+    const runtimeRoot = JAVA_MANAGED_ROOT;
+    const targetDir = path.join(runtimeRoot, `java-${major}`);
+    await fsp.mkdir(targetDir, { recursive: true });
+    const archivePath = path.join(runtimeRoot, packageName);
+    await downloadFile(links, archivePath, {
+      expectedSize: asset.binary.package.size || 0,
+      onProgress: (received, total) => updateTask(taskId, {
+        received, total,
+        progress: total ? Math.min(95, (received / total) * 100) : 0,
+        detail: `${(received / 1048576).toFixed(1)} MB / ${total ? (total / 1048576).toFixed(1) : '?'} MB`,
+      }),
+    });
+    updateTask(taskId, { progress: 96, detail: '正在解压…' });
+    if (packageName.endsWith('.zip')) {
+      new AdmZip(archivePath).extractAllTo(targetDir, true);
+    } else {
+      await new Promise((resolve, reject) => {
+        const child = spawn('tar', ['xzf', archivePath, '-C', targetDir], { windowsHide: true });
+        child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`解压 Java 失败（代码 ${code}）`)));
+        child.on('error', reject);
+      });
+    }
+    // 归一层级：把 jdk-xxx-jre/ 的内容上移，保证 bin/java 位于 java-{major}/bin
+    const exeName = process.platform === 'win32' ? 'java.exe' : 'java';
+    if (!fs.existsSync(path.join(targetDir, 'bin', exeName))) {
+      const entries = await fsp.readdir(targetDir, { withFileTypes: true });
+      const inner = entries.find((entry) => entry.isDirectory() && fs.existsSync(path.join(targetDir, entry.name, 'bin', exeName)));
+      if (!inner) throw new Error('Java 压缩包结构异常');
+      const innerDir = path.join(targetDir, inner.name);
+      for (const entry of await fsp.readdir(innerDir, { withFileTypes: true })) {
+        await fsp.rename(path.join(innerDir, entry.name), path.join(targetDir, entry.name));
+      }
+      await fsp.rm(innerDir, { recursive: true, force: true });
+    }
+    if (process.platform !== 'win32') await fsp.chmod(path.join(targetDir, 'bin', exeName), 0o755).catch(() => {});
+    await fsp.rm(archivePath, { force: true }).catch(() => {});
+    finishTask(taskId, 'completed', `Java ${major} 已安装到 ${targetDir}`);
+    return targetDir;
+  } catch (error) {
+    finishTask(taskId, 'error', error.message || 'Java 下载失败');
+    throw error;
+  }
+}
+
+async function resolveJavaForInstance(instance) {
+  const required = await requiredJavaMajor(instance);
+  const usable = (await listJavas()).filter((item) => item.major >= required);
+  if (usable.length) {
+    const score = (item) => (item.path === settings.javaPath ? 0 : item.major === required ? 1 : 2);
+    usable.sort((a, b) => score(a) - score(b) || a.major - b.major);
+    return { java: usable[0], required, downloaded: false };
+  }
+  if (settings.autoDownloadJava === false) {
+    const error = new Error(`这个实例需要 Java ${required}，但本机没有可用的 Java。可在“设置 → Java 环境”开启自动下载或手动配置。`);
+    error.code = 'NO_JAVA';
+    throw error;
+  }
+  await downloadJavaRuntime(pickDownloadMajor(required));
+  const after = (await listJavas()).filter((item) => item.major >= required);
+  if (!after.length) {
+    const error = new Error(`Java ${required} 自动下载后仍不可用，请到“设置 → Java 环境”手动配置`);
+    error.code = 'NO_JAVA';
+    throw error;
+  }
+  after.sort((a, b) => a.major - b.major);
+  return { java: after[0], required, downloaded: true };
 }
 
 function offlineUuid(username) {
@@ -824,12 +978,7 @@ async function launchGame(instanceId) {
   const instance = instances.find((item) => item.id === instanceId);
   if (!instance) throw new Error('请先选择游戏实例');
   if (gameProcesses.has(instanceId)) throw new Error('这个实例已经在运行中');
-  const java = await detectJava();
-  if (!java.found) {
-    const error = new Error('未检测到 Java。请在“设置 → Java 路径”中选择 java.exe。Minecraft 1.20.5 及以上建议 Java 21，较新版本建议 Java 17。');
-    error.code = 'NO_JAVA';
-    throw error;
-  }
+  const { java, required: requiredMajor } = await resolveJavaForInstance(instance);
   const runtimeVersion = instance.runtimeVersion || instance.version;
   const metaPath = path.join(instance.versionDir, `${runtimeVersion}.json`);
   let meta = JSON.parse(await fsp.readFile(metaPath, 'utf8'));
