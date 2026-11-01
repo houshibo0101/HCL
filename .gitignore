@@ -1,0 +1,9 @@
+node_modules/
+node_modules-incomplete*/
+.npm-cache*/
+dist/
+release/
+data/
+*.log
+/preview.png
+/preview-release.png

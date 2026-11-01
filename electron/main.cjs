@@ -1,0 +1,701 @@
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const fsp = fs.promises;
+const os = require('os');
+const crypto = require('crypto');
+const { spawn, execFile } = require('child_process');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
+const AdmZip = require('adm-zip');
+
+const isDev = !app.isPackaged;
+const DATA_ROOT = process.env.HCL_DATA_DIR || (process.platform === 'win32' && fs.existsSync('D:\\') ? 'D:\\HCL\\data' : path.join(app.getPath('userData'), 'data'));
+const SETTINGS_FILE = path.join(DATA_ROOT, 'settings.json');
+const INSTANCES_FILE = path.join(DATA_ROOT, 'instances.json');
+const CACHE_DIR = path.join(DATA_ROOT, 'cache');
+const MANIFEST_URL = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json';
+const USER_AGENT = 'HCL/1.0 (Minecraft Launcher)';
+let mainWindow;
+let settings;
+let instances = [];
+const tasks = new Map();
+const controllers = new Map();
+const gameProcesses = new Map();
+
+const defaultSettings = () => ({
+  username: 'Player',
+  memory: 4096,
+  javaPath: '',
+  gameDirectory: path.join(DATA_ROOT, 'games'),
+  selectedInstanceId: null,
+  closeOnLaunch: false,
+});
+
+async function ensureStorage() {
+  await fsp.mkdir(DATA_ROOT, { recursive: true });
+  await fsp.mkdir(CACHE_DIR, { recursive: true });
+  try {
+    settings = { ...defaultSettings(), ...JSON.parse(await fsp.readFile(SETTINGS_FILE, 'utf8')) };
+  } catch {
+    settings = defaultSettings();
+    await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  }
+  try {
+    instances = JSON.parse(await fsp.readFile(INSTANCES_FILE, 'utf8'));
+  } catch {
+    instances = [];
+    await fsp.writeFile(INSTANCES_FILE, '[]');
+  }
+  await fsp.mkdir(settings.gameDirectory, { recursive: true });
+}
+
+function send(channel, data) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data);
+}
+
+function publicTask(task) {
+  return { ...task };
+}
+
+function updateTask(id, patch) {
+  const previous = tasks.get(id);
+  if (!previous) return;
+  const next = { ...previous, ...patch, updatedAt: Date.now() };
+  tasks.set(id, next);
+  send('tasks:update', publicTask(next));
+}
+
+function createTask(kind, title, total = 0) {
+  const id = crypto.randomUUID();
+  const task = { id, kind, title, status: 'downloading', progress: 0, received: 0, total, detail: '准备下载…', createdAt: Date.now(), updatedAt: Date.now() };
+  tasks.set(id, task);
+  controllers.set(id, new AbortController());
+  send('tasks:update', publicTask(task));
+  return id;
+}
+
+function finishTask(id, status, detail) {
+  updateTask(id, { status, detail, progress: status === 'completed' ? 100 : tasks.get(id)?.progress || 0 });
+  controllers.delete(id);
+}
+
+const ERROR_LOG_FILE = path.join(DATA_ROOT, 'logs', 'error.log');
+
+async function appendErrorLog({ title, item, error, extra = {} }) {
+  try {
+    await fsp.mkdir(path.dirname(ERROR_LOG_FILE), { recursive: true });
+    const lines = [
+      `[${new Date().toLocaleString('zh-CN', { hour12: false })}] 下载/安装失败`,
+      `  任务：${title || '未知任务'}`,
+    ];
+    if (item) {
+      lines.push(
+        `  文件：${item.label || path.basename(item.destination || '') || '未知'}`,
+        `  URL：${item.url || '未知'}`,
+        `  保存位置：${item.destination || '未知'}`,
+        `  期望大小：${item.size || 0} 字节`,
+      );
+    }
+    lines.push(`  错误：${error?.message || String(error)}`);
+    if (error?.cause) lines.push(`  原因：${error.cause.code || error.cause.message || String(error.cause)}`);
+    for (const [key, value] of Object.entries(extra)) lines.push(`  ${key}：${value}`);
+    lines.push('');
+    await fsp.appendFile(ERROR_LOG_FILE, lines.join('\n') + '\n', 'utf8');
+    return ERROR_LOG_FILE;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchJson(url, options = {}) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: options.signal || AbortSignal.timeout(30000),
+        headers: { 'User-Agent': USER_AGENT, Accept: 'application/json', ...(options.headers || {}) },
+      });
+      if (!response.ok) throw new Error(`网络请求失败 (${response.status})：${new URL(url).hostname}`);
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+      if (error.name === 'AbortError' || attempt === 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
+async function fileExists(file, expectedSize) {
+  try {
+    const stat = await fsp.stat(file);
+    return stat.isFile() && (!expectedSize || stat.size === expectedSize);
+  } catch {
+    return false;
+  }
+}
+
+async function downloadFile(url, destination, { signal, onProgress, expectedSize = 0 } = {}) {
+  if (await fileExists(destination, expectedSize)) {
+    const stat = await fsp.stat(destination);
+    onProgress?.(stat.size, stat.size);
+    return { path: destination, size: stat.size, skipped: true };
+  }
+  await fsp.mkdir(path.dirname(destination), { recursive: true });
+  const temporary = `${destination}.part`;
+  const response = await fetch(url, { signal, headers: { 'User-Agent': USER_AGENT } });
+  if (!response.ok) throw new Error(`下载失败 (${response.status})：${path.basename(destination)}`);
+  if (!response.body) throw new Error('下载响应为空');
+  const total = Number(response.headers.get('content-length')) || expectedSize;
+  let received = 0;
+  let lastNotice = 0;
+  const source = Readable.fromWeb(response.body);
+  source.on('data', (chunk) => {
+    received += chunk.length;
+    const now = Date.now();
+    if (now - lastNotice > 90 || received === total) {
+      onProgress?.(received, total);
+      lastNotice = now;
+    }
+  });
+  try {
+    await pipeline(source, fs.createWriteStream(temporary));
+    if (total && received !== total) throw new Error('文件未完整下载，请重试');
+    await fsp.rename(temporary, destination);
+  } catch (error) {
+    await fsp.rm(temporary, { force: true }).catch(() => {});
+    throw error;
+  }
+  onProgress?.(received, total);
+  return { path: destination, size: received, skipped: false };
+}
+
+async function downloadQueue(items, taskId, concurrency = 6) {
+  const totalBytes = items.reduce((sum, item) => sum + (item.size || 0), 0);
+  const progressByFile = new Map();
+  let cursor = 0;
+  let completed = 0;
+  let failure = null;
+  const controller = controllers.get(taskId);
+  updateTask(taskId, { total: totalBytes, detail: `共 ${items.length} 个文件` });
+
+  async function worker() {
+    while (!failure && cursor < items.length) {
+      const index = cursor++;
+      const item = items[index];
+      try {
+        updateTask(taskId, { detail: item.label || path.basename(item.destination) });
+        await downloadFile(item.url, item.destination, {
+          signal: controller?.signal,
+          expectedSize: item.size,
+          onProgress: (received) => {
+            progressByFile.set(index, received);
+            const currentBytes = [...progressByFile.values()].reduce((sum, value) => sum + value, 0);
+            updateTask(taskId, {
+              received: currentBytes,
+              total: totalBytes,
+              progress: totalBytes ? Math.min(99, (currentBytes / totalBytes) * 100) : Math.min(99, ((completed + 1) / items.length) * 100),
+            });
+          },
+        });
+        if (!progressByFile.has(index)) progressByFile.set(index, item.size || 0);
+        completed++;
+        if (!totalBytes) updateTask(taskId, { progress: (completed / items.length) * 100 });
+      } catch (error) {
+        if (!failure) {
+          failure = error;
+          failure.item = item;
+          controller?.abort();
+        }
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  if (failure) throw failure;
+}
+
+function currentOs() {
+  if (process.platform === 'win32') return 'windows';
+  if (process.platform === 'darwin') return 'osx';
+  return 'linux';
+}
+
+function rulesAllow(rules = [], features = {}) {
+  if (!rules.length) return true;
+  let allowed = false;
+  for (const rule of rules) {
+    let matches = true;
+    if (rule.os) {
+      if (rule.os.name && rule.os.name !== currentOs()) matches = false;
+      if (rule.os.arch && rule.os.arch !== (process.arch === 'x64' ? 'x64' : 'x86')) matches = false;
+    }
+    if (rule.features) {
+      for (const [key, value] of Object.entries(rule.features)) {
+        if (Boolean(features[key]) !== value) matches = false;
+      }
+    }
+    if (matches) allowed = rule.action === 'allow';
+  }
+  return allowed;
+}
+
+function nativeSuffix() {
+  return process.arch === 'x64' ? '64' : '32';
+}
+
+function libraryFiles(library, gameDir) {
+  if (!rulesAllow(library.rules)) return [];
+  const base = path.join(gameDir, 'libraries');
+  const result = [];
+  if (library.downloads?.artifact) {
+    const artifact = library.downloads.artifact;
+    result.push({ ...artifact, destination: path.join(base, artifact.path), native: false });
+  } else if (library.name && library.url) {
+    const [group, name, version] = library.name.split(':');
+    const relative = `${group.replaceAll('.', '/')}/${name}/${version}/${name}-${version}.jar`;
+    result.push({ url: `${library.url.replace(/\/$/, '')}/${relative}`, path: relative, size: 0, destination: path.join(base, relative), native: false });
+  }
+  const nativeName = library.natives?.[currentOs()];
+  if (nativeName) {
+    const classifier = nativeName.replace('${arch}', nativeSuffix());
+    const native = library.downloads?.classifiers?.[classifier];
+    if (native) result.push({ ...native, destination: path.join(base, native.path), native: true });
+  }
+  return result;
+}
+
+function mergeVersions(parent, child) {
+  return {
+    ...parent,
+    ...child,
+    libraries: [...(parent.libraries || []), ...(child.libraries || [])],
+    arguments: child.arguments ? {
+      jvm: [...(parent.arguments?.jvm || []), ...(child.arguments.jvm || [])],
+      game: [...(parent.arguments?.game || []), ...(child.arguments.game || [])],
+    } : parent.arguments,
+    downloads: { ...(parent.downloads || {}), ...(child.downloads || {}) },
+  };
+}
+
+async function resolveVersion(versionUrl) {
+  const raw = await fetchJson(versionUrl);
+  if (!raw.inheritsFrom) return raw;
+  const manifest = await getVersionManifest(false);
+  const parent = manifest.versions.find((item) => item.id === raw.inheritsFrom);
+  if (!parent) throw new Error(`找不到父版本 ${raw.inheritsFrom}`);
+  return mergeVersions(await resolveVersion(parent.url), raw);
+}
+
+async function getVersionManifest(refresh = false) {
+  const cacheFile = path.join(CACHE_DIR, 'version-manifest.json');
+  if (!refresh) {
+    try {
+      const cached = JSON.parse(await fsp.readFile(cacheFile, 'utf8'));
+      if (Date.now() - cached.cachedAt < 15 * 60 * 1000) return cached.data;
+    } catch {}
+  }
+  try {
+    const data = await fetchJson(MANIFEST_URL);
+    await fsp.writeFile(cacheFile, JSON.stringify({ cachedAt: Date.now(), data }));
+    return data;
+  } catch (error) {
+    try {
+      const cached = JSON.parse(await fsp.readFile(cacheFile, 'utf8'));
+      return cached.data;
+    } catch {
+      throw error;
+    }
+  }
+}
+
+async function installVersion(version, name, loader = 'Vanilla') {
+  const taskId = createTask('game', `安装 Minecraft ${version.id}${loader !== 'Vanilla' ? ` · ${loader}` : ''}`);
+  let attemptDir = null;
+  try {
+    const manifest = await getVersionManifest(false);
+    const entry = manifest.versions.find((item) => item.id === version.id);
+    if (!entry) throw new Error('版本清单中不存在此版本');
+    const instanceName = (name || `Minecraft ${version.id}`).trim().slice(0, 40);
+    let meta;
+    if (loader === 'Fabric') {
+      updateTask(taskId, { detail: '获取 Fabric 加载器…', progress: 1 });
+      const loaders = await fetchJson(`https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(version.id)}`);
+      if (!loaders.length) throw new Error(`Fabric 暂不支持 Minecraft ${version.id}`);
+      const selectedLoader = loaders.find((item) => item.loader.stable) || loaders[0];
+      meta = await resolveVersion(`https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(version.id)}/${encodeURIComponent(selectedLoader.loader.version)}/profile/json`);
+    } else {
+      meta = await resolveVersion(entry.url);
+    }
+    const runtimeVersion = meta.id || version.id;
+    const id = `${runtimeVersion.replace(/[^a-zA-Z0-9._-]/g, '-')}-${Date.now().toString(36)}`;
+    const gameDir = path.join(settings.gameDirectory, 'instances', id);
+    attemptDir = gameDir;
+    const versionDir = path.join(gameDir, 'versions', runtimeVersion);
+    await fsp.mkdir(versionDir, { recursive: true });
+    updateTask(taskId, { detail: '读取版本信息…', progress: 1 });
+    await fsp.writeFile(path.join(versionDir, `${runtimeVersion}.json`), JSON.stringify(meta, null, 2));
+    if (!meta.downloads?.client) throw new Error('此版本缺少客户端下载信息');
+    const assetIndexUrl = meta.assetIndex?.url;
+    if (!assetIndexUrl) throw new Error('此版本缺少资源索引');
+    const assetIndexPath = path.join(gameDir, 'assets', 'indexes', `${meta.assetIndex.id}.json`);
+    await downloadFile(assetIndexUrl, assetIndexPath, { signal: controllers.get(taskId)?.signal, expectedSize: meta.assetIndex.size });
+    const assetIndex = JSON.parse(await fsp.readFile(assetIndexPath, 'utf8'));
+    const downloads = [];
+    downloads.push({ ...meta.downloads.client, destination: path.join(versionDir, `${runtimeVersion}.jar`), label: '游戏客户端' });
+    const nativeLibraries = [];
+    for (const library of meta.libraries || []) {
+      for (const file of libraryFiles(library, gameDir)) {
+        downloads.push({ ...file, label: path.basename(file.destination) });
+        if (file.native) nativeLibraries.push(file.destination);
+      }
+    }
+    for (const [assetPath, object] of Object.entries(assetIndex.objects || {})) {
+      const objectHash = object.hash;
+      downloads.push({
+        url: `https://resources.download.minecraft.net/${objectHash.slice(0, 2)}/${objectHash}`,
+        size: object.size,
+        destination: path.join(gameDir, 'assets', 'objects', objectHash.slice(0, 2), objectHash),
+        label: `游戏资源 ${assetPath.split('/').pop() || objectHash.slice(0, 8)}`,
+      });
+    }
+    if (meta.logging?.client?.file) {
+      const logFile = meta.logging.client.file;
+      downloads.push({ ...logFile, destination: path.join(gameDir, 'assets', 'log_configs', logFile.id), label: '日志配置' });
+    }
+    await downloadQueue(downloads, taskId, 8);
+    await fsp.mkdir(path.join(gameDir, 'mods'), { recursive: true });
+    await fsp.mkdir(path.join(gameDir, 'shaderpacks'), { recursive: true });
+    await fsp.mkdir(path.join(gameDir, 'saves'), { recursive: true });
+    const instance = {
+      id, name: instanceName, version: version.id, runtimeVersion, type: version.type, loader,
+      gameDir, versionDir, createdAt: Date.now(), lastPlayed: null,
+    };
+    instances.unshift(instance);
+    settings.selectedInstanceId = id;
+    await Promise.all([
+      fsp.writeFile(INSTANCES_FILE, JSON.stringify(instances, null, 2)),
+      fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2)),
+    ]);
+    finishTask(taskId, 'completed', `安装完成 · ${downloads.length + 1} 个文件`);
+    send('instances:update', { instances, selectedInstanceId: id });
+    return { instance, taskId };
+  } catch (error) {
+    const failedItem = error?.item;
+    await appendErrorLog({
+      title: `安装 Minecraft ${version.id}${loader !== 'Vanilla' ? ` · ${loader}` : ''}`,
+      item: failedItem,
+      error,
+      extra: { 游戏版本: version.id, 加载器: loader },
+    });
+    finishTask(taskId, error.name === 'AbortError' ? 'cancelled' : 'error', error.message);
+    if (attemptDir) {
+      try {
+        if (fs.existsSync(attemptDir)) await shell.trashItem(attemptDir);
+      } catch {}
+    }
+    throw error;
+  }
+}
+
+async function detectJava() {
+  const candidates = [];
+  if (settings.javaPath) candidates.push(settings.javaPath);
+  if (process.env.JAVA_HOME) candidates.push(path.join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'java.exe' : 'java'));
+  const roots = process.platform === 'win32' ? [
+    'C:\\Program Files\\Java', 'C:\\Program Files\\Eclipse Adoptium', 'C:\\Program Files\\Microsoft',
+    'C:\\Program Files\\Amazon Corretto', 'C:\\Program Files\\BellSoft', 'D:\\Java', 'D:\\Program Files\\Java',
+    'D:\\Program Files\\Eclipse Adoptium',
+  ] : ['/usr/bin'];
+  for (const root of roots) {
+    try {
+      if (root === '/usr/bin') {
+        candidates.push('/usr/bin/java');
+        continue;
+      }
+      const entries = await fsp.readdir(root, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) candidates.push(path.join(root, entry.name, 'bin', 'java.exe'));
+      }
+    } catch {}
+  }
+  if (process.platform === 'win32') candidates.push('java.exe');
+  else candidates.push('/usr/bin/java');
+  for (const candidate of [...new Set(candidates)]) {
+    try {
+      const version = await new Promise((resolve, reject) => {
+        execFile(candidate, ['-version'], { timeout: 5000, windowsHide: true }, (error, _stdout, stderr) => {
+          if (error) return reject(error);
+          const match = stderr.match(/version "([^"]+)"/);
+          resolve(match?.[1] || stderr.split('\n')[0] || '未知版本');
+        });
+      });
+      return { found: true, path: candidate, version };
+    } catch {}
+  }
+  return { found: false, path: '', version: '' };
+}
+
+function offlineUuid(username) {
+  const hex = crypto.createHash('md5').update(`OfflinePlayer:${username}`).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function argumentValues(items, features = {}) {
+  const values = [];
+  for (const item of items || []) {
+    if (typeof item === 'string') values.push(item);
+    else if (rulesAllow(item.rules, features)) {
+      if (Array.isArray(item.value)) values.push(...item.value);
+      else if (item.value) values.push(item.value);
+    }
+  }
+  return values;
+}
+
+async function launchGame(instanceId) {
+  const instance = instances.find((item) => item.id === instanceId);
+  if (!instance) throw new Error('请先选择游戏实例');
+  if (gameProcesses.has(instanceId)) throw new Error('这个实例已经在运行中');
+  const java = await detectJava();
+  if (!java.found) {
+    const error = new Error('未检测到 Java。请在“设置 → Java 路径”中选择 java.exe。Minecraft 1.20.5 及以上建议 Java 21，较新版本建议 Java 17。');
+    error.code = 'NO_JAVA';
+    throw error;
+  }
+  const runtimeVersion = instance.runtimeVersion || instance.version;
+  const metaPath = path.join(instance.versionDir, `${runtimeVersion}.json`);
+  const meta = JSON.parse(await fsp.readFile(metaPath, 'utf8'));
+  const gameDir = instance.gameDir;
+  const nativesDir = path.join(instance.versionDir, 'natives');
+  await fsp.mkdir(nativesDir, { recursive: true });
+  const classpath = [];
+  for (const library of meta.libraries || []) {
+    for (const file of libraryFiles(library, gameDir)) {
+      if (file.native) {
+        const zip = new AdmZip(file.destination);
+        for (const entry of zip.getEntries()) {
+          if (!entry.isDirectory && !entry.entryName.startsWith('META-INF/')) zip.extractEntryTo(entry, nativesDir, false, true);
+        }
+      } else classpath.push(file.destination);
+    }
+  }
+  const clientJar = path.join(instance.versionDir, `${runtimeVersion}.jar`);
+  classpath.push(clientJar);
+  const username = (settings.username || 'Player').trim() || 'Player';
+  const values = {
+    auth_player_name: username,
+    version_name: instance.version,
+    game_directory: gameDir,
+    assets_root: path.join(gameDir, 'assets'),
+    assets_index_name: meta.assetIndex?.id || meta.assets,
+    auth_uuid: offlineUuid(username),
+    auth_access_token: '0',
+    clientid: '0',
+    auth_xuid: '0',
+    user_type: 'msa',
+    version_type: meta.type || 'release',
+    natives_directory: nativesDir,
+    launcher_name: 'HCL',
+    launcher_version: '1.0.0',
+    classpath: classpath.join(path.delimiter),
+    classpath_separator: path.delimiter,
+    library_directory: path.join(gameDir, 'libraries'),
+    game_assets: path.join(gameDir, 'assets'),
+  };
+  const replaceArgs = (args) => args.map((arg) => arg.replace(/\$\{([^}]+)\}/g, (_, key) => values[key] ?? ''));
+  const jvmArgs = [`-Xmx${Number(settings.memory) || 4096}M`, '-Xms512M', '-Dfile.encoding=UTF-8'];
+  if (meta.arguments?.jvm) jvmArgs.push(...argumentValues(meta.arguments.jvm));
+  else jvmArgs.push(`-Djava.library.path=${nativesDir}`, `-cp`, classpath.join(path.delimiter));
+  const mainClass = meta.mainClass;
+  if (!mainClass) throw new Error('版本信息中缺少启动类');
+  const gameArgs = meta.arguments?.game ? argumentValues(meta.arguments.game) : (meta.minecraftArguments || '').split(' ');
+  const args = [...replaceArgs(jvmArgs), mainClass, ...replaceArgs(gameArgs)].filter(Boolean);
+  const child = spawn(java.path, args, { cwd: gameDir, windowsHide: false });
+  gameProcesses.set(instanceId, child);
+  instance.lastPlayed = Date.now();
+  await fsp.writeFile(INSTANCES_FILE, JSON.stringify(instances, null, 2));
+  send('instances:update', { instances, selectedInstanceId: settings.selectedInstanceId });
+  child.stdout.on('data', (data) => send('game:log', { instanceId, text: data.toString() }));
+  child.stderr.on('data', (data) => send('game:log', { instanceId, text: data.toString() }));
+  child.on('error', (error) => {
+    gameProcesses.delete(instanceId);
+    send('game:log', { instanceId, text: `启动失败：${error.message}` });
+  });
+  child.on('exit', (code) => {
+    gameProcesses.delete(instanceId);
+    send('game:log', { instanceId, text: `游戏进程已退出（代码 ${code ?? '未知'}）`, exited: true });
+  });
+  return { pid: child.pid, java: java.path };
+}
+
+async function searchModrinth(options) {
+  const { query = '', kind = 'mod', gameVersion = '', loader = '', sort = 'relevance', offset = 0 } = options;
+  const facets = [[`project_type:${kind === 'shader' ? 'shader' : 'mod'}`]];
+  if (gameVersion) facets.push([`versions:${gameVersion}`]);
+  if (loader && kind === 'mod') facets.push([`categories:${loader.toLowerCase()}`]);
+  const params = new URLSearchParams({ query, limit: '24', offset: String(offset), index: sort, facets: JSON.stringify(facets) });
+  return fetchJson(`https://api.modrinth.com/v2/search?${params}`);
+}
+
+async function projectVersions(projectId, options = {}) {
+  const params = new URLSearchParams();
+  if (options.gameVersion) params.set('game_versions', JSON.stringify([options.gameVersion]));
+  if (options.loader && options.kind === 'mod') params.set('loaders', JSON.stringify([options.loader.toLowerCase()]));
+  const query = params.toString();
+  return fetchJson(`https://api.modrinth.com/v2/project/${encodeURIComponent(projectId)}/version${query ? `?${query}` : ''}`);
+}
+
+async function downloadResource(resource) {
+  const instance = instances.find((item) => item.id === resource.instanceId);
+  if (!instance) throw new Error('请先在首页选择游戏实例');
+  const file = resource.file;
+  if (!file?.url || !file?.filename) throw new Error('资源文件信息不完整');
+  const safeName = path.basename(file.filename).replace(/[<>:"|?*]/g, '-');
+  const folder = resource.kind === 'shader' ? 'shaderpacks' : 'mods';
+  const destination = path.join(instance.gameDir, folder, safeName);
+  const taskId = createTask(resource.kind, `${resource.projectTitle} · ${safeName}`, file.size || 0);
+  try {
+    await downloadFile(file.url, destination, {
+      signal: controllers.get(taskId)?.signal,
+      expectedSize: file.size || 0,
+      onProgress: (received, total) => updateTask(taskId, {
+        received, total, progress: total ? Math.min(99, (received / total) * 100) : 0,
+        detail: `${(received / 1048576).toFixed(1)} MB / ${total ? (total / 1048576).toFixed(1) : '?'} MB`,
+      }),
+    });
+    finishTask(taskId, 'completed', `已保存到 ${instance.name} / ${folder}`);
+    return { path: destination, taskId };
+  } catch (error) {
+    await appendErrorLog({
+      title: `${resource.projectTitle || 'Modrinth 资源'} · ${safeName}`,
+      item: { url: file.url, destination, size: file.size || 0, label: safeName },
+      error,
+      extra: { 目标实例: instance.name, 资源类型: resource.kind === 'shader' ? '光影' : 'Mod' },
+    });
+    finishTask(taskId, error.name === 'AbortError' ? 'cancelled' : 'error', error.message);
+    throw error;
+  }
+}
+
+function registerIpc() {
+  ipcMain.handle('app:get-state', () => ({ settings, instances, tasks: [...tasks.values()], dataRoot: DATA_ROOT, running: [...gameProcesses.keys()] }));
+  ipcMain.handle('settings:save', async (_event, next) => {
+    settings = { ...settings, ...next };
+    if (!settings.username.trim()) settings.username = 'Player';
+    settings.memory = Math.max(1024, Math.min(32768, Number(settings.memory) || 4096));
+    await fsp.mkdir(settings.gameDirectory, { recursive: true });
+    await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    return settings;
+  });
+  ipcMain.handle('versions:list', (_event, refresh) => getVersionManifest(refresh));
+  ipcMain.handle('versions:install', (_event, version, name, loader) => installVersion(version, name, loader));
+  ipcMain.handle('modrinth:search', (_event, options) => searchModrinth(options));
+  ipcMain.handle('modrinth:versions', (_event, projectId, options) => projectVersions(projectId, options));
+  ipcMain.handle('modrinth:download', (_event, resource) => downloadResource(resource));
+  ipcMain.handle('instances:select', async (_event, id) => {
+    if (!instances.some((item) => item.id === id)) throw new Error('实例不存在');
+    settings.selectedInstanceId = id;
+    await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    return id;
+  });
+  ipcMain.handle('instances:delete', async (_event, id) => {
+    const instance = instances.find((item) => item.id === id);
+    if (!instance) return;
+    if (gameProcesses.has(id)) throw new Error('游戏正在运行，无法删除此实例');
+    instances = instances.filter((item) => item.id !== id);
+    if (settings.selectedInstanceId === id) settings.selectedInstanceId = instances[0]?.id || null;
+    await fsp.writeFile(INSTANCES_FILE, JSON.stringify(instances, null, 2));
+    await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    await shell.trashItem(instance.gameDir);
+    send('instances:update', { instances, selectedInstanceId: settings.selectedInstanceId });
+  });
+  ipcMain.handle('game:launch', (_event, id) => launchGame(id));
+  ipcMain.handle('folder:open', async (_event, kind, id) => {
+    const instance = instances.find((item) => item.id === id);
+    let target = kind === 'root' ? DATA_ROOT : settings.gameDirectory;
+    if (instance) {
+      target = kind === 'mods' || kind === 'shaderpacks' ? path.join(instance.gameDir, kind) : instance.gameDir;
+    }
+    await fsp.mkdir(target, { recursive: true });
+    return shell.openPath(target);
+  });
+  ipcMain.handle('dialog:java', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'Java', extensions: ['exe'] }] });
+    return result.canceled ? null : result.filePaths[0];
+  });
+  ipcMain.handle('dialog:directory', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'createDirectory'] });
+    return result.canceled ? null : result.filePaths[0];
+  });
+  ipcMain.handle('java:detect', () => detectJava());
+  ipcMain.handle('tasks:cancel', (_event, id) => {
+    controllers.get(id)?.abort();
+    updateTask(id, { status: 'cancelled', detail: '已取消' });
+  });
+  ipcMain.handle('tasks:clear', () => {
+    for (const [id, task] of tasks) if (['completed', 'error', 'cancelled'].includes(task.status)) tasks.delete(id);
+    return [...tasks.values()];
+  });
+  ipcMain.handle('logs:open-error', async () => {
+    await fsp.mkdir(path.dirname(ERROR_LOG_FILE), { recursive: true });
+    if (!fs.existsSync(ERROR_LOG_FILE)) await fsp.writeFile(ERROR_LOG_FILE, 'HCL 错误日志\n（此文件记录下载/安装失败详情，按时间追加）\n\n', 'utf8');
+    return shell.openPath(ERROR_LOG_FILE);
+  });
+  ipcMain.handle('window:minimize', () => mainWindow.minimize());
+  ipcMain.handle('window:maximize', () => mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize());
+  ipcMain.handle('window:close', () => mainWindow.close());
+}
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    minWidth: 1100,
+    minHeight: 700,
+    frame: false,
+    backgroundColor: '#0e1310',
+    icon: path.join(__dirname, isDev ? '../public/hcl.png' : '../dist/hcl.png'),
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  mainWindow.once('ready-to-show', () => mainWindow.show());
+  if (isDev) mainWindow.loadURL('http://127.0.0.1:5173');
+  else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  if (process.env.HCL_CAPTURE_PATH) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2200));
+      try {
+        const image = await mainWindow.webContents.capturePage();
+        await fsp.writeFile(process.env.HCL_CAPTURE_PATH, image.toPNG());
+      } catch (error) {
+        console.error('capture failed:', error);
+      } finally {
+        app.quit();
+      }
+    });
+  }
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+}
+
+app.whenReady().then(async () => {
+  await ensureStorage();
+  registerIpc();
+  createWindow();
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});

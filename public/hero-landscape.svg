@@ -1,0 +1,35 @@
+<svg width="900" height="420" viewBox="0 0 900 420" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="sky" x1="450" y1="0" x2="450" y2="420" gradientUnits="userSpaceOnUse"><stop stop-color="#92D6B0" stop-opacity=".25"/><stop offset="1" stop-color="#15251A" stop-opacity="0"/></linearGradient>
+    <linearGradient id="fade" x1="0" y1="210" x2="300" y2="210" gradientUnits="userSpaceOnUse"><stop stop-color="#111A14"/><stop offset="1" stop-color="#111A14" stop-opacity="0"/></linearGradient>
+  </defs>
+  <rect width="900" height="420" fill="url(#sky)"/>
+  <circle cx="695" cy="92" r="46" fill="#D9F4BD" fill-opacity=".65"/>
+  <g opacity=".35" fill="#B9D9C4"><path d="M520 74h98v16h-98zM550 58h48v16h-48zM740 142h110v15H740zM770 126h54v16h-54z"/></g>
+  <path d="M338 420V302h44v-38h46v-42h46v-34h46v-42h46v42h46v34h46v42h46v38h46v118H338Z" fill="#233A2B"/>
+  <path d="M484 420V308h38v-34h38v-36h38v-34h38v34h38v36h38v34h38v112H484Z" fill="#192D21"/>
+  <g>
+    <path d="M388 420v-96h58v-42h58v138H388Z" fill="#385B3D"/>
+    <path d="M388 324h58v-42h58v40H388v2Z" fill="#6E9B57"/>
+    <path d="M446 282h58v40h-58z" fill="#83AE61"/>
+    <path d="M504 420v-98h58v-56h58v154H504Z" fill="#416C44"/>
+    <path d="M504 322h58v-56h58v56H504Z" fill="#7FAE5D"/>
+    <path d="M620 420v-140h58v-44h58v184H620Z" fill="#355B3A"/>
+    <path d="M620 280h58v-44h58v44H620Z" fill="#74A653"/>
+    <path d="M736 420v-98h58v-42h58v140H736Z" fill="#2C4B32"/>
+    <path d="M736 322h58v-42h58v42H736Z" fill="#67974C"/>
+    <path d="M438 420v-64h44v64h-44Z" fill="#203E2A"/>
+    <path d="M668 420v-72h44v72h-44Z" fill="#1D3825"/>
+  </g>
+  <g>
+    <path d="M720 286h16v-96h-16z" fill="#3C3625"/>
+    <path d="M674 190h108v46H674zM690 160h76v30h-76zM698 236h60v26h-60z" fill="#426D3C"/>
+    <path d="M690 160h76v16h-76z" fill="#60904B"/>
+  </g>
+  <g opacity=".8">
+    <path d="M550 350h12v-70h-12z" fill="#403827"/>
+    <path d="M520 284h70v34h-70zM530 260h52v24h-52z" fill="#507A40"/>
+  </g>
+  <path d="M332 394h568v26H332z" fill="#15291B"/>
+  <path d="M0 0h300v420H0z" fill="url(#fade)"/>
+</svg>
