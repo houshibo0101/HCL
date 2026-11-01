@@ -14,7 +14,9 @@ const isDev = !app.isPackaged;
 const DATA_ROOT = process.env.HCL_DATA_DIR || (process.platform === 'win32' && fs.existsSync('D:\\') ? 'D:\\HCL\\data' : path.join(app.getPath('userData'), 'data'));
 const SETTINGS_FILE = path.join(DATA_ROOT, 'settings.json');
 const INSTANCES_FILE = path.join(DATA_ROOT, 'instances.json');
+const ACCOUNTS_FILE = path.join(DATA_ROOT, 'accounts.json');
 const CACHE_DIR = path.join(DATA_ROOT, 'cache');
+let accounts = [];
 const MANIFEST_URL = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json';
 const USER_AGENT = 'HCL/1.0 (Minecraft Launcher)';
 let mainWindow;
@@ -55,7 +57,24 @@ async function ensureStorage() {
     instances = [];
     await fsp.writeFile(INSTANCES_FILE, '[]');
   }
+  try {
+    accounts = JSON.parse(await fsp.readFile(ACCOUNTS_FILE, 'utf8'));
+  } catch {
+    accounts = [];
+  }
+  if (!accounts.length && (settings.username || '').trim()) {
+    // 迁移：把旧的离线玩家名变成第一个离线账户
+    const name = settings.username.trim() || 'Player';
+    accounts = [{ id: `offline-${Date.now().toString(36)}`, type: 'offline', name, uuid: offlineUuid(name), accessToken: '0', apiRoot: '', createdAt: Date.now() }];
+    settings.currentAccountId = accounts[0].id;
+    await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  }
+  await fsp.writeFile(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2));
   await fsp.mkdir(settings.gameDirectory, { recursive: true });
+}
+
+function saveAccounts() {
+  return fsp.writeFile(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2));
 }
 
 function send(channel, data) {
@@ -464,6 +483,14 @@ async function detectProxyJvmArgs() {
   }
 }
 
+let playitChild = null;
+
+function sendPlayitOutput(text) {
+  const match = text.match(/https:\/\/playit\.gg\/claim\/[A-Za-z0-9_-]+/);
+  if (match) send('net:playit-claim', { url: match[0] });
+  send('net:playit-log', { text });
+}
+
 async function installVersion(version, name, loader = 'Vanilla', forgeId = null) {
   const taskId = createTask('game', `安装 Minecraft ${version.id}${loader !== 'Vanilla' ? ` · ${loader}` : ''}`);
   let attemptDir = null;
@@ -748,6 +775,23 @@ async function ensureGameLanguage(gameDir, versionId) {
   } catch {}
 }
 
+async function ensureAuthlibInjector() {
+  // 外置登录核心组件（authlib-injector），官方源失败走 BMCLAPI 镜像
+  const dest = path.join(DATA_ROOT, 'authlib-injector.jar');
+  if (fs.existsSync(dest) && fs.statSync(dest).size > 100000) return dest;
+  const mirrorBase = 'https://bmclapi2.bangbang93.com/mirrors/authlib-injector';
+  let info;
+  try {
+    info = await fetchJson('https://authlib-injector.yushi.moe/artifact/latest.json');
+  } catch (error) {
+    if (error.name === 'AbortError') throw error;
+    info = await fetchJson(`${mirrorBase}/artifact/latest.json`);
+  }
+  const official = info.url;
+  await downloadFile([official, official.replace('https://authlib-injector.yushi.moe', mirrorBase)], dest, { expectedSize: info.size || 0 });
+  return dest;
+}
+
 async function launchGame(instanceId) {
   const instance = instances.find((item) => item.id === instanceId);
   if (!instance) throw new Error('请先选择游戏实例');
@@ -785,15 +829,18 @@ async function launchGame(instanceId) {
   }
   const clientJar = path.join(instance.versionDir, `${runtimeVersion}.jar`);
   classpath.push(clientJar);
-  const username = (settings.username || 'Player').trim() || 'Player';
+  const account = accounts.find((a) => a.id === settings.currentAccountId) || accounts[0] || null;
+  const username = (account?.name || settings.username || 'Player').trim() || 'Player';
+  const authUuid = account?.type === 'yggdrasil' && account.uuid ? account.uuid : offlineUuid(username);
+  const authToken = account?.type === 'yggdrasil' && account.accessToken ? account.accessToken : '0';
   const values = {
     auth_player_name: username,
     version_name: instance.version,
     game_directory: gameDir,
     assets_root: path.join(gameDir, 'assets'),
     assets_index_name: meta.assetIndex?.id || meta.assets,
-    auth_uuid: offlineUuid(username),
-    auth_access_token: '0',
+    auth_uuid: authUuid,
+    auth_access_token: authToken,
     clientid: '0',
     auth_xuid: '0',
     user_type: 'msa',
@@ -808,6 +855,14 @@ async function launchGame(instanceId) {
   };
   const replaceArgs = (args) => args.map((arg) => arg.replace(/\$\{([^}]+)\}/g, (_, key) => values[key] ?? ''));
   const jvmArgs = [`-Xmx${Number(settings.memory) || 4096}M`, '-Xms512M', '-Dfile.encoding=UTF-8'];
+  if (account?.type === 'yggdrasil' && account.apiRoot) {
+    try {
+      const agentJar = await ensureAuthlibInjector();
+      jvmArgs.unshift(`-javaagent:${agentJar}=${account.apiRoot}`);
+    } catch (error) {
+      send('game:log', { instanceId, text: `外置登录组件下载失败：${error.message}（将以内置身份尝试）` });
+    }
+  }
   if (meta.arguments?.jvm) jvmArgs.push(...argumentValues(meta.arguments.jvm));
   else jvmArgs.push(`-Djava.library.path=${nativesDir}`, `-cp`, classpath.join(path.delimiter));
   const mainClass = meta.mainClass;
@@ -895,6 +950,103 @@ function registerIpc() {
   ipcMain.handle('versions:list', (_event, refresh) => getVersionManifest(refresh));
   ipcMain.handle('versions:install', (_event, version, name, loader, forgeId) => installVersion(version, name, loader, forgeId));
   ipcMain.handle('forge:list', (_event, mcVersion) => getForgeBuilds(mcVersion));
+  ipcMain.handle('accounts:list', () => ({
+    accounts: accounts.map(({ accessToken, ...rest }) => ({ ...rest, hasToken: Boolean(accessToken) })),
+    currentId: settings.currentAccountId,
+  }));
+  ipcMain.handle('accounts:add-offline', async (_event, name) => {
+    const trimmed = String(name || '').trim().slice(0, 16);
+    if (!trimmed) throw new Error('玩家名不能为空');
+    const account = { id: `offline-${Date.now().toString(36)}`, type: 'offline', name: trimmed, uuid: offlineUuid(trimmed), accessToken: '0', apiRoot: '', createdAt: Date.now() };
+    accounts.push(account);
+    settings.currentAccountId = account.id;
+    await Promise.all([saveAccounts(), fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2))]);
+    send('accounts:update', {});
+    return { id: account.id };
+  });
+  ipcMain.handle('accounts:login', async (_event, { apiRoot, username, password }) => {
+    const root = String(apiRoot || '').trim().replace(/\/+$/, '');
+    if (!/^https:\/\//.test(root)) throw new Error('服务器地址必须以 https:// 开头');
+    if (!String(username || '').trim() || !String(password || '')) throw new Error('请输入账号和密码');
+    let data;
+    try {
+      const resp = await fetch(`${root}/authserver/authenticate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent: { name: 'Minecraft', version: 1 }, username: String(username).trim(), password: String(password) }),
+        signal: AbortSignal.timeout(20000),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(body.errorMessage || `登录失败 (${resp.status})`);
+      data = body;
+    } catch (error) {
+      if (/登录失败|创建角色|账号/.test(error.message || '')) throw error;
+      throw new Error(`无法连接认证服务器：${error.message}`);
+    }
+    const profile = data.selectedProfile || data.availableProfiles?.[0];
+    if (!profile) throw new Error('该账号还没有创建角色，请先到皮肤站网站创建角色');
+    const account = { id: `ygg-${Date.now().toString(36)}`, type: 'yggdrasil', apiRoot: root, name: profile.name, uuid: profile.id, accessToken: data.accessToken, createdAt: Date.now() };
+    accounts = accounts.filter((a) => !(a.type === 'yggdrasil' && a.apiRoot === root && a.name === account.name));
+    accounts.push(account);
+    settings.currentAccountId = account.id;
+    await Promise.all([saveAccounts(), fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2))]);
+    send('accounts:update', {});
+    return { id: account.id, name: account.name };
+  });
+  ipcMain.handle('accounts:select', async (_event, id) => {
+    if (!accounts.some((a) => a.id === id)) throw new Error('账户不存在');
+    settings.currentAccountId = id;
+    await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    send('accounts:update', {});
+    return true;
+  });
+  ipcMain.handle('accounts:remove', async (_event, id) => {
+    accounts = accounts.filter((a) => a.id !== id);
+    if (settings.currentAccountId === id) settings.currentAccountId = accounts[0]?.id || null;
+    await Promise.all([saveAccounts(), fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2))]);
+    send('accounts:update', {});
+    return true;
+  });
+  ipcMain.handle('net:local-ips', () => {
+    const result = [];
+    for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
+      for (const addr of addrs || []) {
+        if (addr.family !== 'IPv4' || addr.internal) continue;
+        if (/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(addr.address)) result.push({ name, address: addr.address });
+      }
+    }
+    return result;
+  });
+  ipcMain.handle('net:download-playit', async () => {
+    const dest = path.join(DATA_ROOT, 'tools', 'playit-agent.exe');
+    if (fs.existsSync(dest) && fs.statSync(dest).size > 5000000) return { path: dest, skipped: true };
+    const info = await fetchJson('https://api.github.com/repos/playit-cloud/playit-agent/releases/latest');
+    const asset = (info.assets || []).find((a) => /windows.*x86_64\.exe$/i.test(a.name)) || (info.assets || []).find((a) => a.name.endsWith('.exe'));
+    if (!asset) throw new Error('未找到 playit 代理程序');
+    await downloadFile([asset.browser_download_url, `https://ghproxy.net/${asset.browser_download_url}`], dest, { expectedSize: asset.size || 0 });
+    return { path: dest };
+  });
+  ipcMain.handle('net:start-playit', () => {
+    if (playitChild) return { running: true };
+    const exe = path.join(DATA_ROOT, 'tools', 'playit-agent.exe');
+    if (!fs.existsSync(exe)) throw new Error('请先下载代理程序');
+    playitChild = spawn(exe, [], { windowsHide: true });
+    playitChild.stdout.on('data', (data) => sendPlayitOutput(data.toString()));
+    playitChild.stderr.on('data', (data) => sendPlayitOutput(data.toString()));
+    playitChild.on('exit', () => {
+      playitChild = null;
+      send('net:playit-log', { text: '—— 隧道代理已停止 ——' });
+    });
+    return { running: true };
+  });
+  ipcMain.handle('net:stop-playit', () => {
+    if (playitChild) {
+      playitChild.kill();
+      playitChild = null;
+    }
+    return true;
+  });
+  ipcMain.handle('net:open-console', () => shell.openExternal('https://playit.gg/servers'));
   ipcMain.handle('modrinth:search', (_event, options) => searchModrinth(options));
   ipcMain.handle('modrinth:versions', (_event, projectId, options) => projectVersions(projectId, options));
   ipcMain.handle('modrinth:download', (_event, resource) => downloadResource(resource));
