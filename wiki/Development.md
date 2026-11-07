@@ -40,9 +40,12 @@ export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 
 ```bash
 npm run dev     # 开发模式（Vite + Electron，热更新）
-npm run build   # 构建前端到 dist/
+npm run build   # 构建前端到 dist/（生产构建会自动注入 CSP）
 npm run start   # 以生产方式启动（需先 build）
 npm run dist    # 打包 Windows 安装程序，输出到 release/
+npm run lint    # ESLint 检查 electron/、src/（含 .jsx）、scripts/
+npm test        # 纯函数单测（版本号 / Java 匹配 / 离线 UUID / 架构映射）
+npm run docs    # 从 wiki/ 生成 docs/（GitHub Pages 版本），别直接改 docs/
 ```
 
 electron-builder 打包常见坑（国内环境）：
@@ -56,19 +59,21 @@ electron-builder 打包常见坑（国内环境）：
 ```
 HCL/
 ├── electron/
-│   ├── main.cjs       # 主进程：窗口、IPC、版本安装（Vanilla/Fabric/Forge）、
+│   ├── main.cjs       # 主进程：窗口、IPC、版本安装（原版/Fabric/Forge/NeoForge/Quilt）、
 │   │                  #   游戏启动、账户（离线/Yggdrasil）、联机（cpolar）、
 │   │                  #   Java 检测与自动下载、electron-updater 自动更新
-│   └── preload.cjs    # 预加载：contextBridge 暴露 window.hcl API
+│   ├── lib/
+│   │   └── version-utils.cjs # 纯函数：版本号比较、Java 匹配、离线 UUID、架构映射（可单测）
+│   └── preload.cjs    # 预加载：contextBridge 暴露 window.hcl API（sandbox 下运行）
 ├── src/
 │   ├── main.jsx       # React 入口
 │   ├── App.jsx        # 全部页面组件（首页/版本/Mod/光影/下载/联机/设置）
 │   ├── modDictionary.js # Mod/光影中英映射词表（中文搜索与汉化）
 │   └── styles.css     # 全局样式（CSS 变量主题系统，6 套 data-theme）
 ├── public/            # 静态资源（图标、英雄区插画）
-├── scripts/           # 辅助脚本（push-via-api.cjs：API 推送备用通道）
+├── scripts/           # 辅助脚本（push-via-api.cjs 备用推送通道、test-version-utils.cjs、sync-docs.cjs）
 ├── wiki/              # 本 Wiki 源文件（推送到 GitHub Wiki）
-├── docs/              # GitHub Pages 版文档（main 分支 /docs 发布）
+├── docs/              # GitHub Pages 版文档（由 npm run docs 从 wiki/ 生成）
 ├── .github/workflows/release-mac.yml  # tag 触发的 macOS CI
 ├── dist/              # 构建输出（gitignore）
 └── release/           # 打包输出（gitignore）
@@ -78,13 +83,14 @@ HCL/
 
 | 模块 | 位置（main.cjs） | 说明 |
 | --- | --- | --- |
-| 版本安装 | `installVersion` | 客户端/libraries/assets 并发下载，路径去重防竞态，失败清理半成品 |
-| Forge | `installVersion` Forge 分支 | 官方 installer `--installClient` + BMCLAPI 兜底 + 系统代理注入 |
-| 游戏启动 | `launchGame` | inheritsFrom 合并父版本、authlib-injector 注入、语言写中文 |
-| Java 匹配 | `requiredJavaMajor` / `resolveJavaForInstance` | 读版本 JSON `javaVersion`，缺则 Adoptium 下载（TUNA 镜像优先） |
+| 版本安装 | `installVersion` | 客户端/libraries/assets 并发下载，路径去重防竞态，SHA1 校验，失败清理半成品 |
+| Forge / NeoForge | `installVersion` 安装器分支 | 官方 installer `--installClient` + BMCLAPI 兜底 + 系统代理注入 |
+| 游戏启动 | `launchGame` | inheritsFrom 合并父版本、authlib-injector 注入、语言写中文、natives 解压结果缓存 |
+| Java 匹配 | `requiredJavaMajor` / `resolveJavaForInstance` | 读版本 JSON `javaVersion`，缺则 Adoptium 下载（TUNA 镜像优先）；纯函数在 `lib/version-utils.cjs` |
 | 账户 | `accounts:*` | accounts.json 多账户；Yggdrasil `authserver/authenticate` |
 | 联机 | `net:*` | 本机 IP 枚举；cpolar 客户端下载（msiexec /a 静默解包）、隧道启停、本地 API 查询公网地址 |
-| 自动更新 | `setupAutoUpdater` | electron-updater，启动检查 + 4 小时定时复查，事件广播渲染层 |
+| 自动更新 | `setupAutoUpdater` | electron-updater，启动检查 + 2 小时定时复查 + 切回窗口限流复查，事件广播渲染层 |
+| 安全边界 | `createWindow` / `openExternalSafe` | 渲染进程 `sandbox: true` + CSP（构建时注入）；外链只放行 http(s)；单实例锁；配置文件原子写入 |
 
 ## 外部 API
 

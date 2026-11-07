@@ -8,7 +8,6 @@ import {
 } from 'lucide-react';
 import { translateQuery, lookupProject } from './modDictionary';
 
-let vtRunning = false;
 /* View Transitions 已移除（v1.6.6/1.6.7 曾导致界面卡死）：页面切换回退为即时渲染 + CSS 入场动画 */
 
 const THEMES = [
@@ -493,9 +492,9 @@ function SettingsPage({ settings, dataRoot, appVersion, platform, onCheckUpdates
           {!accounts.length && <div className="forge-loading">还没有账户，点击右上角「添加账户」创建</div>}
         </div></section>
       <section className="settings-section"><div className="settings-title"><Palette size={19} /><div><h2>外观主题</h2><p>选择启动器的强调色，点击立即生效并保存</p></div></div><div className="theme-grid">{THEMES.map((theme) => <button key={theme.id} className={`theme-card ${form.theme === theme.id ? 'selected' : ''}`} onClick={() => applyTheme(theme.id)}><span className="theme-swatch" style={{ background: `linear-gradient(135deg, ${theme.c1}, ${theme.c2})` }} /><span>{theme.name}{form.theme === theme.id && <Check size={13} />}</span></button>)}</div></section>
-      <section className="settings-section"><div className="settings-title"><Zap size={19} /><div><h2>Java 环境</h2><p>启动 Minecraft 所需的 Java 运行环境</p></div></div><div className="java-status"><div className={`java-status-icon ${java?.found ? 'ok' : ''}`}>{java?.found ? <Check size={20} /> : <AlertCircle size={20} />}</div><div><strong>{java?.found ? `已检测到 Java ${java.version}` : '未检测到可用的 Java'}</strong><span>{java?.found ? java.path : '1.20.5 及以上建议 Java 21，较新版本建议 Java 17'}</span></div><div className="java-actions">{!java?.found && <a className="button secondary small" href="https://adoptium.net/temurin/releases/?version=21" target="_blank" rel="noreferrer"><Download size={14} />获取 Java 21</a>}<button className="button secondary small" onClick={async () => { setJava(null); setJava(await onDetectJava()); }}><RefreshCw size={14} />重新检测</button></div></div><label className="field horizontal"><span>Java 路径</span><div className="path-input"><input value={form.javaPath} onChange={(e) => update('javaPath', e.target.value)} placeholder="留空以自动检测 java.exe" /><button className="button secondary small" onClick={async () => { const file = await onChooseJava(); if (file) update('javaPath', file); }}>浏览</button></div></label><div className="field horizontal"><span>游戏内存</span><div className="memory-control"><div><MemoryStick size={16} /><input type="range" min="1024" max="16384" step="512" value={form.memory} onChange={(e) => update('memory', Number(e.target.value))} /><strong>{(form.memory / 1024).toFixed(1)} GB</strong></div><small>通常分配 4 GB 即可；大型 Mod 整合包可适当增加</small></div></div><div className="toggle-row"><div><strong>自动下载缺失的 Java</strong><span>启动时自动匹配游戏版本所需的 Java（8/17/21），缺失时从 Adoptium 下载安装到启动器数据目录（国内走清华镜像）</span></div><button className={`switch ${form.autoDownloadJava !== false ? 'on' : ''}`} onClick={async () => { const next = form.autoDownloadJava === false; update('autoDownloadJava', next); try { await onSave({ ...form, autoDownloadJava: next }); } catch {} }}><i /></button></div></section>
+      <section className="settings-section"><div className="settings-title"><Zap size={19} /><div><h2>Java 环境</h2><p>启动 Minecraft 所需的 Java 运行环境</p></div></div><div className="java-status"><div className={`java-status-icon ${java?.found ? 'ok' : ''}`}>{java?.found ? <Check size={20} /> : <AlertCircle size={20} />}</div><div><strong>{java?.found ? `已检测到 Java ${java.version}` : '未检测到可用的 Java'}</strong><span>{java?.found ? java.path : '1.20.5 及以上需要 Java 21，1.17–1.20.4 需要 Java 17，1.16.5 及以下需要 Java 8'}</span></div><div className="java-actions">{!java?.found && <a className="button secondary small" href="https://adoptium.net/temurin/releases/?version=21" target="_blank" rel="noreferrer"><Download size={14} />获取 Java 21</a>}<button className="button secondary small" onClick={async () => { setJava(null); setJava(await onDetectJava()); }}><RefreshCw size={14} />重新检测</button></div></div><label className="field horizontal"><span>Java 路径</span><div className="path-input"><input value={form.javaPath} onChange={(e) => update('javaPath', e.target.value)} placeholder="留空以自动检测 java.exe" /><button className="button secondary small" onClick={async () => { const file = await onChooseJava(); if (file) update('javaPath', file); }}>浏览</button></div></label><div className="field horizontal"><span>游戏内存</span><div className="memory-control"><div><MemoryStick size={16} /><input type="range" min="1024" max="16384" step="512" value={form.memory} onChange={(e) => update('memory', Number(e.target.value))} /><strong>{(form.memory / 1024).toFixed(1)} GB</strong></div><small>通常分配 4 GB 即可；大型 Mod 整合包可适当增加</small></div></div><div className="toggle-row"><div><strong>自动下载缺失的 Java</strong><span>启动时自动匹配游戏版本所需的 Java（8/17/21），缺失时从 Adoptium 下载安装到启动器数据目录（国内走清华镜像）</span></div><button className={`switch ${form.autoDownloadJava !== false ? 'on' : ''}`} onClick={async () => { const next = form.autoDownloadJava === false; update('autoDownloadJava', next); try { await onSave({ ...form, autoDownloadJava: next }); } catch {} }}><i /></button></div></section>
       <section className="settings-section"><div className="settings-title"><HardDrive size={19} /><div><h2>存储位置</h2><p>游戏实例、Mod 和光影的保存目录</p></div></div><label className="field horizontal"><span>游戏目录</span><div className="path-input"><input value={form.gameDirectory} onChange={(e) => update('gameDirectory', e.target.value)} /><button className="button secondary small" onClick={async () => { const folder = await onChooseDirectory(); if (folder) update('gameDirectory', folder); }}>浏览</button></div></label><div className="storage-note"><Info size={15} /><span>配置与缓存目录：{dataRoot}</span><button onClick={onOpenRoot}><FolderOpen size={14} />打开</button></div></section>
-      <section className="settings-section"><div className="settings-title"><Rocket size={19} /><div><h2>启动器更新</h2><p>自动检查新版本并在后台下载，重启后即可完成安装</p></div></div><div className="toggle-row"><div><strong>自动检查并下载更新</strong><span>开启后，启动时和运行中每 4 小时各检查一次；关闭后仍可在右侧关于卡片手动检查</span></div><button className={`switch ${form.autoUpdate !== false ? 'on' : ''}`} onClick={async () => { const next = form.autoUpdate === false; update('autoUpdate', next); try { await onSave({ ...form, autoUpdate: next }); } catch {} }}><i /></button></div></section>
+      <section className="settings-section"><div className="settings-title"><Rocket size={19} /><div><h2>启动器更新</h2><p>自动检查新版本并在后台下载，重启后即可完成安装</p></div></div><div className="toggle-row"><div><strong>自动检查并下载更新</strong><span>开启后，启动时和运行中每 2 小时各检查一次；关闭后仍可在右侧关于卡片手动检查</span></div><button className={`switch ${form.autoUpdate !== false ? 'on' : ''}`} onClick={async () => { const next = form.autoUpdate === false; update('autoUpdate', next); try { await onSave({ ...form, autoUpdate: next }); } catch {} }}><i /></button></div></section>
       <section className="settings-section"><div className="settings-title"><Gauge size={19} /><div><h2>启动加速</h2><p>启动游戏前自动整理系统内存，为游戏腾出更多可用空间</p></div><button className="section-action" onClick={async () => { const mb = await window.hcl.optimizeMemory(); toast(mb > 0 ? `内存优化完成，已释放 ${mb} MB 可用空间` : '本次未释放内存（系统可用内存充足或权限受限）', mb > 0 ? 'success' : 'info'); }}><Zap size={12} />立即优化</button></div><div className="toggle-row"><div><strong>启动前自动优化内存</strong><span>启动游戏前压缩各进程内存占用（Windows），实测可释放数百 MB 到数 GB；系统可用内存充足（3 GB 以上）时自动跳过</span></div><button className={`switch ${form.memoryOptimize !== false ? 'on' : ''}`} onClick={async () => { const next = form.memoryOptimize === false; update('memoryOptimize', next); try { await onSave({ ...form, memoryOptimize: next }); } catch {} }}><i /></button></div></section>
       <button className="button primary save-settings" disabled={saving} onClick={save}>{saving ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}保存设置</button>
       {accountModal && <Modal title="添加游戏账户" subtitle="离线账户或皮肤站账户（Yggdrasil 外置登录）" onClose={() => setAccountModal(false)}>
@@ -520,7 +519,7 @@ function SettingsPage({ settings, dataRoot, appVersion, platform, onCheckUpdates
           <button className="button primary" disabled={authBusy} onClick={submitAuth}>{authBusy ? <LoaderCircle className="spin" size={17} /> : authType === 'offline' ? '创建离线账户' : '登录'}</button>
         </footer>
       </Modal>}
-    </div><aside className="settings-aside"><div className="about-card"><Logo /><div className="about-version"><span>版本 {appVersion || '1.6.1'}</span><span>{platform === 'darwin' ? 'macOS' : 'Windows'}</span><button className="check-update" onClick={onCheckUpdates}><RefreshCw size={12} />检查更新</button></div><p>一个简单、清爽的 Minecraft 启动器。专注于游戏与社区内容，不做多余的事情。</p><div className="about-features"><span><Check size={14} />官方游戏版本</span><span><Check size={14} />Modrinth 资源</span><span><Check size={14} />本地实例管理</span></div></div><div className="legal-note">Minecraft 是 Mojang Synergies AB 的商标。HCL 不是官方 Minecraft 产品，与 Mojang 或 Microsoft 无隶属关系。</div></aside></div>
+    </div><aside className="settings-aside"><div className="about-card"><Logo /><div className="about-version"><span>版本 {appVersion || '—'}</span><span>{platform === 'darwin' ? 'macOS' : 'Windows'}</span><button className="check-update" onClick={onCheckUpdates}><RefreshCw size={12} />检查更新</button></div><p>一个简单、清爽的 Minecraft 启动器。专注于游戏与社区内容，不做多余的事情。</p><div className="about-features"><span><Check size={14} />官方游戏版本</span><span><Check size={14} />Modrinth 资源</span><span><Check size={14} />本地实例管理</span></div></div><div className="legal-note">Minecraft 是 Mojang Synergies AB 的商标。HCL 不是官方 Minecraft 产品，与 Mojang 或 Microsoft 无隶属关系。</div></aside></div>
   </div>;
 }
 
@@ -530,7 +529,7 @@ function InstanceModal({ instances, selectedId, onClose, onSelect, onDelete, onO
 
 export default function App() {
   const [page, setPage] = useState('home');
-  const [state, setState] = useState({ settings: { username: 'Player', memory: 4096 }, instances: [], tasks: [], dataRoot: 'D:\\HCL\\data', appVersion: '1.6.5', platform: 'win32' });
+  const [state, setState] = useState({ settings: { username: 'Player', memory: 4096 }, instances: [], tasks: [], dataRoot: 'D:\\HCL\\data', appVersion: '', platform: 'win32' });
   const [ready, setReady] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [instanceModal, setInstanceModal] = useState(false);
@@ -568,7 +567,16 @@ export default function App() {
     setTimeout(() => setToasts((old) => old.filter((item) => item.id !== id)), 4200);
   }, []);
   useEffect(() => {
-    window.hcl.getState().then(async (data) => { setState(data); setRunning(data.running || []); setReady(true); setJava(await window.hcl.detectJava()); }).catch((e) => toast(e.message, 'error'));
+    window.hcl.getState()
+      .then((data) => {
+        setState(data);
+        setRunning(data.running || []);
+        setReady(true); // 先放行界面，再在后台检测 Java，避免 splash 被 Java 扫描拖住
+        window.hcl.detectJava().then(setJava).catch(() => {});
+      })
+      // 初始化失败也要放行 splash，否则用户会永远停在启动画面
+      .catch((e) => toast(e.message || '启动器初始化失败', 'error'))
+      .finally(() => setReady(true));
     refreshAccounts();
     const offAccounts = window.hcl.listen('accounts:update', refreshAccounts);
     const offTask = window.hcl.onTask((task) => setState((old) => ({ ...old, tasks: [...old.tasks.filter((item) => item.id !== task.id), task] })));
@@ -677,7 +685,7 @@ export default function App() {
           ? <div className="sidebar-version" title="新版本正在后台下载">正在下载更新 {Math.floor(updateInfo.percent || 0)}%</div>
           : updateInfo?.status === 'error'
             ? <div className="sidebar-version error" title="点击重试检查更新" onClick={checkUpdates}>更新检查失败 <span>•</span> 点击重试</div>
-            : <div className="sidebar-version" title="点击检查启动器更新" onClick={() => checkUpdates(true)}>HCL v{state.appVersion || '1.6.5'} <span>•</span> 点击检查更新</div>}</div></aside>
+            : <div className="sidebar-version" title="点击检查启动器更新" onClick={() => checkUpdates(true)}>HCL v{state.appVersion || '—'} <span>•</span> 点击检查更新</div>}</div></aside>
     <main className="main-area"><div className="page-header"><div><h1>{PAGE_META[page][0]}</h1><p>{PAGE_META[page][1]}</p></div>{page === 'home' && <button className="current-instance" onClick={() => setInstanceModal(true)}><div className="current-instance-icon"><Gamepad2 size={18} /></div><div><span>当前实例</span><strong>{selected?.name || '尚未安装游戏'}</strong></div><ChevronDown size={16} /></button>}</div><div className="page-scroll">
       {page === 'home' && <HomePage instances={state.instances} selected={selected} settings={state.settings} tasks={state.tasks} onLaunch={launch} launching={launching} running={selected && running.includes(selected.id)} onNavigate={navigate} onManage={() => setInstanceModal(true)} onSelect={selectInstance} onOpenFolder={() => window.hcl.openFolder('games')} java={java} appVersion={state.appVersion} onCheckUpdates={() => checkUpdates(true)} platform={state.platform} account={currentAccount} />}
       {page === 'versions' && <VersionsPage installed={state.instances} onInstall={install} installing={installing} settings={state.settings} />}
@@ -690,7 +698,7 @@ export default function App() {
     {updatePanel && <Modal title="启动器更新" subtitle="自动检查 · 后台下载 · 一键安装" onClose={() => setUpdatePanel(false)}>
       <div className="update-panel">
         <div className="update-versions">
-          <div><span>当前版本</span><strong>v{state.appVersion || '1.7.2'}</strong></div>
+          <div><span>当前版本</span><strong>v{state.appVersion || '—'}</strong></div>
           <i>→</i>
           <div className={updateStatus === 'none' ? 'latest' : ''}><span>最新版本</span><strong>{updateStatus === 'none' ? `v${state.appVersion}` : updateInfo?.version ? `v${updateInfo.version}` : checking ? '检查中…' : '待检查'}</strong></div>
         </div>

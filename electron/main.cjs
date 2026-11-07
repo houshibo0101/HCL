@@ -9,6 +9,10 @@ const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const AdmZip = require('adm-zip');
 const { autoUpdater } = require('electron-updater');
+const {
+  compareBuildDesc, isNewerVersion, legacyLangCode, nativeArchName, nativeClassifierSuffix,
+  offlineUuid, parseJavaMajor, pickDownloadMajor, requiredJavaMajorFallback,
+} = require('./lib/version-utils.cjs');
 
 const isDev = !app.isPackaged;
 const DATA_ROOT = process.env.HCL_DATA_DIR || (process.platform === 'win32' && fs.existsSync('D:\\') ? 'D:\\HCL\\data' : path.join(app.getPath('userData'), 'data'));
@@ -52,7 +56,7 @@ async function ensureStorage() {
     settings = { ...defaultSettings(), ...JSON.parse(await fsp.readFile(SETTINGS_FILE, 'utf8')) };
   } catch {
     settings = defaultSettings();
-    await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    await writeJsonAtomic(SETTINGS_FILE, settings);
   }
   try {
     instances = JSON.parse(await fsp.readFile(INSTANCES_FILE, 'utf8'));
@@ -70,14 +74,14 @@ async function ensureStorage() {
     const name = settings.username.trim() || 'Player';
     accounts = [{ id: `offline-${Date.now().toString(36)}`, type: 'offline', name, uuid: offlineUuid(name), accessToken: '0', apiRoot: '', createdAt: Date.now() }];
     settings.currentAccountId = accounts[0].id;
-    await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    await writeJsonAtomic(SETTINGS_FILE, settings);
   }
-  await fsp.writeFile(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2));
+  await writeJsonAtomic(ACCOUNTS_FILE, accounts);
   await fsp.mkdir(settings.gameDirectory, { recursive: true });
 }
 
 function saveAccounts() {
-  return fsp.writeFile(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2));
+  return writeJsonAtomic(ACCOUNTS_FILE, accounts);
 }
 
 function send(channel, data) {
@@ -108,6 +112,14 @@ function createTask(kind, title, total = 0) {
 function finishTask(id, status, detail) {
   updateTask(id, { status, detail, progress: status === 'completed' ? 100 : tasks.get(id)?.progress || 0 });
   controllers.delete(id);
+}
+
+// 原子写入 JSON：先写同目录临时文件再 rename，避免进程中断/并发写入留下半截文件
+async function writeJsonAtomic(file, data) {
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.${Date.now().toString(36)}.tmp`;
+  await fsp.writeFile(temporary, JSON.stringify(data, null, 2));
+  await fsp.rename(temporary, file);
 }
 
 const ERROR_LOG_FILE = path.join(DATA_ROOT, 'logs', 'error.log');
@@ -175,11 +187,25 @@ function mirrorLibUrl(url) {
     .replace('https://meta.fabricmc.net', 'https://bmclapi2.bangbang93.com/fabric-meta');
 }
 
-async function downloadSingle(url, destination, { signal, onProgress, expectedSize = 0 } = {}) {
+function sha1File(file) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha1');
+    const stream = fs.createReadStream(file);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
+
+async function downloadSingle(url, destination, { signal, onProgress, expectedSize = 0, sha1 = '' } = {}) {
   if (await fileExists(destination, expectedSize)) {
-    const stat = await fsp.stat(destination);
-    onProgress?.(stat.size, stat.size);
-    return { path: destination, size: stat.size, skipped: true };
+    // 只有大小对得上还不够：清单里带 sha1 时再校验一次内容，避免半截/损坏文件被当成已完成
+    if (!sha1 || (await sha1File(destination)) === String(sha1).toLowerCase()) {
+      const stat = await fsp.stat(destination);
+      onProgress?.(stat.size, stat.size);
+      return { path: destination, size: stat.size, skipped: true };
+    }
+    await fsp.rm(destination, { force: true });
   }
   await fsp.mkdir(path.dirname(destination), { recursive: true });
   const temporary = `${destination}.${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.part`;
@@ -201,6 +227,10 @@ async function downloadSingle(url, destination, { signal, onProgress, expectedSi
   try {
     await pipeline(source, fs.createWriteStream(temporary));
     if (total && received !== total) throw new Error('文件未完整下载，请重试');
+    if (sha1) {
+      const actual = await sha1File(temporary);
+      if (actual !== String(sha1).toLowerCase()) throw new Error(`文件校验失败（SHA1 不匹配）：${path.basename(destination)}`);
+    }
     if (await fileExists(destination, expectedSize)) {
       await fsp.rm(temporary, { force: true }).catch(() => {});
       onProgress?.(received, total);
@@ -263,6 +293,7 @@ async function downloadQueue(rawItems, taskId, concurrency = 6) {
         await downloadFile(item.urls || item.url, item.destination, {
           signal: controller?.signal,
           expectedSize: item.size,
+          sha1: item.sha1,
           onProgress: (received) => {
             progressByFile.set(index, received);
             const currentBytes = [...progressByFile.values()].reduce((sum, value) => sum + value, 0);
@@ -295,6 +326,9 @@ function currentOs() {
   return 'linux';
 }
 
+// Mojang 清单里的 os.arch 只有 x86 / x64 / arm64 三种取值
+const NATIVE_ARCH = nativeArchName(process.arch);
+
 function rulesAllow(rules = [], features = {}) {
   if (!rules.length) return true;
   let allowed = false;
@@ -302,7 +336,7 @@ function rulesAllow(rules = [], features = {}) {
     let matches = true;
     if (rule.os) {
       if (rule.os.name && rule.os.name !== currentOs()) matches = false;
-      if (rule.os.arch && rule.os.arch !== (process.arch === 'x64' ? 'x64' : 'x86')) matches = false;
+      if (rule.os.arch && rule.os.arch !== NATIVE_ARCH) matches = false;
     }
     if (rule.features) {
       for (const [key, value] of Object.entries(rule.features)) {
@@ -315,7 +349,7 @@ function rulesAllow(rules = [], features = {}) {
 }
 
 function nativeSuffix() {
-  return process.arch === 'x64' ? '64' : '32';
+  return nativeClassifierSuffix(process.arch);
 }
 
 function libraryFiles(library, gameDir) {
@@ -402,16 +436,6 @@ async function fetchText(url, options = {}) {
     }
   }
   throw lastError;
-}
-
-function compareBuildDesc(a, b) {
-  const pa = String(a).split(/[.-]/).map((x) => Number(x) || 0);
-  const pb = String(b).split(/[.-]/).map((x) => Number(x) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const diff = (pb[i] || 0) - (pa[i] || 0);
-    if (diff) return diff;
-  }
-  return String(b).localeCompare(String(a));
 }
 
 async function getForgeBuilds(mcVersion) {
@@ -640,7 +664,7 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null,
     const id = `${runtimeVersion.replace(/[^a-zA-Z0-9._-]/g, '-')}-${Date.now().toString(36)}`;
     const gameDir = path.join(settings.gameDirectory, 'instances', id);
     attemptDir = gameDir;
-    const versionDir = path.join(gameDir, 'versions', runtimeVersion);
+    let versionDir = path.join(gameDir, 'versions', runtimeVersion);
     await fsp.mkdir(versionDir, { recursive: true });
     updateTask(taskId, { detail: '读取版本信息…', progress: 1 });
     const isInstallerLoader = loader === 'Forge' || loader === 'NeoForge';
@@ -651,7 +675,7 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null,
     const assetIndexUrl = assetMeta?.assetIndex?.url;
     if (!assetIndexUrl) throw new Error('此版本缺少资源索引');
     const assetIndexPath = path.join(gameDir, 'assets', 'indexes', `${assetMeta.assetIndex.id}.json`);
-    await downloadFile(assetIndexUrl, assetIndexPath, { signal: controllers.get(taskId)?.signal, expectedSize: assetMeta.assetIndex.size });
+    await downloadFile(assetIndexUrl, assetIndexPath, { signal: controllers.get(taskId)?.signal, expectedSize: assetMeta.assetIndex.size, sha1: assetMeta.assetIndex.sha1 });
     const assetIndex = JSON.parse(await fsp.readFile(assetIndexPath, 'utf8'));
     // 资源索引中多个路径可能共用同一哈希，按目标路径去重，避免并发写同一文件
     const downloads = [];
@@ -765,6 +789,7 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null,
       pushDownload({
         url: `https://resources.download.minecraft.net/${objectHash.slice(0, 2)}/${objectHash}`,
         size: object.size,
+        sha1: objectHash,
         destination: path.join(gameDir, 'assets', 'objects', objectHash.slice(0, 2), objectHash),
         label: `游戏资源 ${assetPath.split('/').pop() || objectHash.slice(0, 8)}`,
       });
@@ -786,8 +811,8 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null,
     instances.unshift(instance);
     settings.selectedInstanceId = id;
     await Promise.all([
-      fsp.writeFile(INSTANCES_FILE, JSON.stringify(instances, null, 2)),
-      fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2)),
+      writeJsonAtomic(INSTANCES_FILE, instances),
+      writeJsonAtomic(SETTINGS_FILE, settings),
     ]);
     finishTask(taskId, 'completed', finishDetail || `安装完成 · ${downloads.length} 个文件`);
     send('instances:update', { instances, selectedInstanceId: id });
@@ -913,23 +938,6 @@ async function optimizeMemory() {
 
 const JAVA_MANAGED_ROOT = path.join(DATA_ROOT, 'runtime');
 
-function parseJavaMajor(version) {
-  const m = String(version).match(/^(1\.)?(\d+)/);
-  if (!m) return 0;
-  return Number(m[2]); // "1.8.0_402" → 8，"21.0.5" → 21，"17.0.14" → 17
-}
-
-function requiredJavaMajorFallback(versionId) {
-  const m = String(versionId).match(/^1\.(\d+)(?:\.(\d+))?/);
-  if (!m) return 8;
-  const minor = Number(m[1]);
-  const patch = Number(m[2] || 0);
-  if (minor <= 16) return 8;                 // ≤ 1.16.5
-  if (minor === 17) return 17;               // 1.17（官方 16，17 兼容）
-  if (minor <= 20 && patch < 5) return 17;   // 1.18 – 1.20.4
-  return 21;                                 // 1.20.5+ / 1.21+
-}
-
 async function requiredJavaMajor(instance) {
   try {
     let meta = JSON.parse(await fsp.readFile(path.join(instance.versionDir, `${instance.runtimeVersion || instance.version}.json`), 'utf8'));
@@ -941,13 +949,6 @@ async function requiredJavaMajor(instance) {
     if (meta?.javaVersion?.majorVersion) return meta.javaVersion.majorVersion;
   } catch {}
   return requiredJavaMajorFallback(instance.version);
-}
-
-function pickDownloadMajor(required) {
-  if (required <= 8) return 8;
-  if (required <= 11) return 11;
-  if (required <= 17) return 17; // 含 16：Adoptium 无 16，17 兼容
-  return 21;                     // 18+ 及 21+ 快照尽力给 21
 }
 
 async function downloadJavaRuntime(major) {
@@ -1033,11 +1034,6 @@ async function resolveJavaForInstance(instance) {
   return { java: after[0], required, downloaded: true };
 }
 
-function offlineUuid(username) {
-  const hex = crypto.createHash('md5').update(`OfflinePlayer:${username}`).digest('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
 function argumentValues(items, features = {}) {
   const values = [];
   for (const item of items || []) {
@@ -1048,11 +1044,6 @@ function argumentValues(items, features = {}) {
     }
   }
   return values;
-}
-
-function legacyLangCode(versionId) {
-  const m = String(versionId).match(/1\.(\d+)/);
-  return (m && Number(m[1]) <= 12) ? 'zh_CN' : 'zh_cn';
 }
 
 async function ensureGameLanguage(gameDir, versionId) {
@@ -1114,17 +1105,31 @@ async function launchGame(instanceId) {
   }
   const gameDir = instance.gameDir;
   const nativesDir = path.join(instance.versionDir, 'natives');
-  await fsp.mkdir(nativesDir, { recursive: true });
+  const nativesMarker = path.join(nativesDir, '.hcl-natives.json');
   const classpath = [];
+  const nativeFiles = [];
   for (const library of meta.libraries || []) {
     for (const file of libraryFiles(library, gameDir)) {
-      if (file.native) {
-        const zip = new AdmZip(file.destination);
-        for (const entry of zip.getEntries()) {
-          if (!entry.isDirectory && !entry.entryName.startsWith('META-INF/')) zip.extractEntryTo(entry, nativesDir, false, true);
-        }
-      } else classpath.push(file.destination);
+      if (file.native) nativeFiles.push(file);
+      else classpath.push(file.destination);
     }
+  }
+  // 原生库解压结果缓存：清单没变就不重复解压（每次启动能省 1–2 秒）
+  const nativesSignature = nativeFiles.map((file) => `${path.basename(file.destination)}:${file.size || 0}`).sort().join('|');
+  let cachedSignature = null;
+  try { cachedSignature = JSON.parse(await fsp.readFile(nativesMarker, 'utf8'))?.signature || null; } catch {}
+  if (!nativeFiles.length || cachedSignature === nativesSignature) {
+    await fsp.mkdir(nativesDir, { recursive: true });
+  } else {
+    await fsp.rm(nativesDir, { recursive: true, force: true });
+    await fsp.mkdir(nativesDir, { recursive: true });
+    for (const file of nativeFiles) {
+      const zip = new AdmZip(file.destination);
+      for (const entry of zip.getEntries()) {
+        if (!entry.isDirectory && !entry.entryName.startsWith('META-INF/')) zip.extractEntryTo(entry, nativesDir, false, true);
+      }
+    }
+    await writeJsonAtomic(nativesMarker, { signature: nativesSignature });
   }
   const clientJar = path.join(instance.versionDir, `${runtimeVersion}.jar`);
   classpath.push(clientJar);
@@ -1172,7 +1177,7 @@ async function launchGame(instanceId) {
   const child = spawn(java.path, args, { cwd: gameDir, windowsHide: false });
   gameProcesses.set(instanceId, child);
   instance.lastPlayed = Date.now();
-  await fsp.writeFile(INSTANCES_FILE, JSON.stringify(instances, null, 2));
+  await writeJsonAtomic(INSTANCES_FILE, instances);
   send('instances:update', { instances, selectedInstanceId: settings.selectedInstanceId });
   child.stdout.on('data', (data) => send('game:log', { instanceId, text: data.toString() }));
   child.stderr.on('data', (data) => send('game:log', { instanceId, text: data.toString() }));
@@ -1217,6 +1222,7 @@ async function downloadResource(resource) {
     await downloadFile(file.url, destination, {
       signal: controllers.get(taskId)?.signal,
       expectedSize: file.size || 0,
+      sha1: file.hashes?.sha1 || '',
       onProgress: (received, total) => updateTask(taskId, {
         received, total, progress: total ? Math.min(99, (received / total) * 100) : 0,
         detail: `${(received / 1048576).toFixed(1)} MB / ${total ? (total / 1048576).toFixed(1) : '?'} MB`,
@@ -1245,7 +1251,7 @@ async function fetchLatestModrinthFile(projectSlug, gameVersion, loaders) {
   if (!Array.isArray(versions) || !versions.length) return null;
   const release = versions.find((v) => v.version_type === 'release') || versions[0];
   const file = (release.files || []).find((f) => f.primary) || (release.files || [])[0];
-  return file ? { url: file.url, filename: file.filename, size: file.size || 0, version: release.version_number } : null;
+  return file ? { url: file.url, filename: file.filename, size: file.size || 0, sha1: file.hashes?.sha1 || '', version: release.version_number } : null;
 }
 
 async function downloadShaderLoaderPack(gameDir, mcVersion, modLoader, parentTaskId) {
@@ -1281,6 +1287,7 @@ async function downloadShaderLoaderPack(gameDir, mcVersion, modLoader, parentTas
       await downloadFile(file.url, destination, {
         signal: controllers.get(parentTaskId)?.signal,
         expectedSize: file.size,
+        sha1: file.sha1,
       });
       downloaded += 1;
     } catch (error) {
@@ -1305,7 +1312,7 @@ function registerIpc() {
     if (!settings.username.trim()) settings.username = 'Player';
     settings.memory = Math.max(1024, Math.min(32768, Number(settings.memory) || 4096));
     await fsp.mkdir(settings.gameDirectory, { recursive: true });
-    await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    await writeJsonAtomic(SETTINGS_FILE, settings);
     scheduleNextUpdateCheck(6000);
     return settings;
   });
@@ -1324,7 +1331,7 @@ function registerIpc() {
     const account = { id: `offline-${Date.now().toString(36)}`, type: 'offline', name: trimmed, uuid: offlineUuid(trimmed), accessToken: '0', apiRoot: '', createdAt: Date.now() };
     accounts.push(account);
     settings.currentAccountId = account.id;
-    await Promise.all([saveAccounts(), fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2))]);
+    await Promise.all([saveAccounts(), writeJsonAtomic(SETTINGS_FILE, settings)]);
     send('accounts:update', {});
     return { id: account.id };
   });
@@ -1353,21 +1360,21 @@ function registerIpc() {
     accounts = accounts.filter((a) => !(a.type === 'yggdrasil' && a.apiRoot === root && a.name === account.name));
     accounts.push(account);
     settings.currentAccountId = account.id;
-    await Promise.all([saveAccounts(), fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2))]);
+    await Promise.all([saveAccounts(), writeJsonAtomic(SETTINGS_FILE, settings)]);
     send('accounts:update', {});
     return { id: account.id, name: account.name };
   });
   ipcMain.handle('accounts:select', async (_event, id) => {
     if (!accounts.some((a) => a.id === id)) throw new Error('账户不存在');
     settings.currentAccountId = id;
-    await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    await writeJsonAtomic(SETTINGS_FILE, settings);
     send('accounts:update', {});
     return true;
   });
   ipcMain.handle('accounts:remove', async (_event, id) => {
     accounts = accounts.filter((a) => a.id !== id);
     if (settings.currentAccountId === id) settings.currentAccountId = accounts[0]?.id || null;
-    await Promise.all([saveAccounts(), fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2))]);
+    await Promise.all([saveAccounts(), writeJsonAtomic(SETTINGS_FILE, settings)]);
     send('accounts:update', {});
     return true;
   });
@@ -1426,7 +1433,7 @@ function registerIpc() {
     const trimmed = String(token || '').trim() || String(settings.cpolarAuthToken || '').trim();
     if (!trimmed) throw new Error('请先到 cpolar 官网注册并填写 authtoken');
     settings.cpolarAuthToken = trimmed;
-    await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    await writeJsonAtomic(SETTINGS_FILE, settings);
     await fsp.writeFile(cpolarConfigPath(), `authtoken: ${trimmed}\nweb_addr: 127.0.0.1:${CPOLAR_WEB_PORT}\n`, 'utf8');
     const localPort = Math.min(65535, Math.max(1024, parseInt(port, 10) || 25565));
     cpolarChild = spawn(exe, ['tcp', String(localPort), `-config=${cpolarConfigPath()}`, '-log=stdout'], { windowsHide: true });
@@ -1446,14 +1453,14 @@ function registerIpc() {
     }
     return true;
   });
-  ipcMain.handle('net:open-cpolar', () => shell.openExternal('https://dashboard.cpolar.com/get-started'));
+  ipcMain.handle('net:open-cpolar', () => openExternalSafe('https://dashboard.cpolar.com/get-started'));
   ipcMain.handle('modrinth:search', (_event, options) => searchModrinth(options));
   ipcMain.handle('modrinth:versions', (_event, projectId, options) => projectVersions(projectId, options));
   ipcMain.handle('modrinth:download', (_event, resource) => downloadResource(resource));
   ipcMain.handle('instances:select', async (_event, id) => {
     if (!instances.some((item) => item.id === id)) throw new Error('实例不存在');
     settings.selectedInstanceId = id;
-    await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    await writeJsonAtomic(SETTINGS_FILE, settings);
     return id;
   });
   ipcMain.handle('instances:delete', async (_event, id) => {
@@ -1462,8 +1469,8 @@ function registerIpc() {
     if (gameProcesses.has(id)) throw new Error('游戏正在运行，无法删除此实例');
     instances = instances.filter((item) => item.id !== id);
     if (settings.selectedInstanceId === id) settings.selectedInstanceId = instances[0]?.id || null;
-    await fsp.writeFile(INSTANCES_FILE, JSON.stringify(instances, null, 2));
-    await fsp.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    await writeJsonAtomic(INSTANCES_FILE, instances);
+    await writeJsonAtomic(SETTINGS_FILE, settings);
     await shell.trashItem(instance.gameDir);
     send('instances:update', { instances, selectedInstanceId: settings.selectedInstanceId });
   });
@@ -1548,16 +1555,6 @@ const JSDELIVR_SOURCES = [
   'https://cdn.jsdelivr.net/gh/houshibo0101/HCL@main/package.json',
   'https://fastly.jsdelivr.net/gh/houshibo0101/HCL@main/package.json',
 ];
-
-function isNewerVersion(remote, local) {
-  const parse = (v) => String(v).replace(/^v/, '').split(/[.+-]/).map((n) => parseInt(n, 10) || 0);
-  const a = parse(remote);
-  const b = parse(local);
-  for (let i = 0; i < 3; i++) {
-    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
-  }
-  return false;
-}
 
 // 所有镜像并行竞速，任何一个成功立即返回（避免串行等满 60 秒）
 async function findMirrorUpdate() {
@@ -1681,7 +1678,7 @@ async function runAutoUpdateCheck() {
     scheduleNextUpdateCheck(UPDATE_CHECK_INTERVAL);
   } catch {
     updateRetryAttempts += 1;
-    // 网络不通时 1 分钟起步、逐次拉长（上限 15 分钟）自动重试，不再等 4 小时
+    // 网络不通时 1 分钟起步、逐次拉长（上限 15 分钟）自动重试，不再等 2 小时
     scheduleNextUpdateCheck(Math.min(UPDATE_RETRY_BASE * updateRetryAttempts, UPDATE_RETRY_MAX));
   }
 }
@@ -1720,6 +1717,15 @@ function setupAutoUpdater() {
   });
 }
 
+// 只放行 http(s) 外链：链接数据来自第三方 API，避免 file:// 等协议被 openExternal 执行
+function openExternalSafe(url) {
+  try {
+    const parsed = new URL(String(url));
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') return shell.openExternal(parsed.toString());
+  } catch { /* 非法 URL 直接忽略 */ }
+  return null;
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -1735,7 +1741,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
   mainWindow.once('ready-to-show', () => mainWindow.show());
@@ -1755,8 +1761,14 @@ function createWindow() {
     });
   }
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    openExternalSafe(url);
     return { action: 'deny' };
+  });
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    // 允许 Vite 开发服务器自身的导航，其余一律拦下改用系统浏览器打开
+    if (isDev && String(url).startsWith('http://127.0.0.1:5173')) return;
+    event.preventDefault();
+    openExternalSafe(url);
   });
   mainWindow.on('focus', () => {
     // 用户每次切回窗口都会顺手查一次更新（限流 10 分钟），不依赖固定周期
@@ -1779,23 +1791,30 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(async () => {
+async function boot() {
   await ensureStorage();
   registerIpc();
   setupAutoUpdater();
   createWindow();
-  if (app.isPackaged && process.platform === 'win32') {
-    if (settings.autoUpdate !== false) {
-      setTimeout(() => {
-        autoUpdater.checkForUpdates().catch(() => {});
-      }, 6000);
-    }
-    scheduleNextUpdateCheck(6000);
-  }
+  // 启动 6 秒后做第一次自动检查：交给统一调度器，避免与手动检查重复触发
+  scheduleNextUpdateCheck(6000);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
-});
+}
+
+// 单实例锁：两个进程同时写 settings.json / instances.json 会互相覆盖
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+  app.whenReady().then(boot);
+}
 
 app.on('before-quit', () => {
   if (cpolarChild) {

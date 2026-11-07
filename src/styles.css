@@ -1,7 +1,6 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
-
+/* 字体全部走系统栈：不依赖 Google Fonts，国内/离线环境启动不会被远程字体请求拖慢 */
 :root {
-  font-family: 'DM Sans', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  font-family: 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', system-ui, -apple-system, sans-serif;
   color: #edf3ef;
   background: var(--bg);
   font-synthesis: none;
@@ -620,10 +619,10 @@ html.theme-morphing, html.theme-morphing *, html.theme-morphing *::before, html.
 .install-hero h2 { font-size: 17px; color: var(--text); }
 .install-hero p { color: var(--muted); font-size: 10px; margin-top: 5px; }
 .install-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; align-items: start; animation: rise-in .3s .04s cubic-bezier(.22,.61,.36,1) both; }
-.install-card { border: 1px solid var(--border); border-radius: 12px; background: var(--panel-1); padding: 22px; }
+.install-card { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); padding: 22px; }
 .install-card .field > span { font-size: 10px; }
 .install-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
-.install-side { border: 1px solid var(--border); border-radius: 12px; background: var(--panel-1); padding: 18px; }
+.install-side { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); padding: 18px; }
 .install-side h3 { font-size: 11px; color: var(--text); margin-bottom: 12px; }
 .install-side ul { list-style: none; display: flex; flex-direction: column; gap: 10px; }
 .install-side li { display: flex; align-items: flex-start; gap: 8px; color: var(--muted); font-size: 9.5px; line-height: 1.55; }
@@ -662,6 +661,6 @@ html.theme-morphing, html.theme-morphing *, html.theme-morphing *::before, html.
 .project-hero-info .resource-tags { margin-top: 8px; }
 .project-page-link { border: 1px solid var(--border); border-radius: 8px; flex-shrink: 0; }
 .project-page-desc { color: #a2afa5; font-size: 10.5px; line-height: 1.7; margin: 14px 0 18px; max-width: 760px; }
-.project-page-section { border: 1px solid var(--border); border-radius: 12px; background: var(--panel-1); padding: 18px; animation: rise-in .3s .04s cubic-bezier(.22,.61,.36,1) both; }
+.project-page-section { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); padding: 18px; animation: rise-in .3s .04s cubic-bezier(.22,.61,.36,1) both; }
 .project-page-section .release-list { max-height: 320px; }
 .project-page .install-hero { animation: rise-in .3s cubic-bezier(.22,.61,.36,1) both; }

@@ -1,6 +1,6 @@
 {
   "name": "hcl-launcher",
-  "version": "1.7.12",
+  "version": "1.7.13",
   "private": true,
   "author": "HCL",
   "description": "HCL - a clean Minecraft launcher with version, mod and shader downloads",
@@ -10,7 +10,9 @@
     "build": "vite build",
     "start": "electron .",
     "dist": "npm run build && electron-builder",
-    "lint": "eslint electron/ src/"
+    "lint": "eslint electron/ src/ scripts/",
+    "test": "node scripts/test-version-utils.cjs",
+    "docs": "node scripts/sync-docs.cjs"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",

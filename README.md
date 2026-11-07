@@ -2,41 +2,47 @@
 
 一个简洁、清爽的 Minecraft 启动器。专注于游戏与社区内容，不做多余的事情。
 
+当前版本 **v1.7.13** · [下载](https://github.com/houshibo0101/HCL/releases/latest) · [文档](https://github.com/houshibo0101/HCL/wiki) · [问题反馈](https://github.com/houshibo0101/HCL/issues)
+
 ![HCL 主界面](docs/preview.png)
 
 ## 功能
 
-- **游戏版本下载** — 接入 Mojang 官方版本源，一键下载客户端、运行库和资源文件，支持正式版 / 快照 / Beta / Alpha
-- **Mod 下载** — 接入 [Modrinth](https://modrinth.com)，按游戏版本和加载器（Fabric / Forge / NeoForge / Quilt）筛选，直接下载到实例的 `mods` 文件夹
+- **游戏版本下载** — 接入 Mojang 官方版本源，一键下载客户端、运行库和资源文件，支持正式版 / 快照 / Beta / Alpha；下载完成后按官方 SHA1 校验，损坏文件自动重下
+- **五种加载器实例** — 原版 / Fabric / Forge / NeoForge / Quilt，创建时一键选择；Forge 与 NeoForge 走官方安装器（BMCLAPI 国内镜像兜底），每个实例拥有独立的存档、Mod 与光影
+- **光影一键就绪** — 创建 Fabric / Quilt 实例时可顺手装好 Iris + Sodium，装完直接挑光影包
+- **Mod 下载** — 接入 [Modrinth](https://modrinth.com)，按游戏版本和加载器筛选，支持中文搜索（内置中英词表），直接下载到实例的 `mods` 文件夹
 - **光影下载** — Modrinth 光影资源浏览与下载，保存到实例的 `shaderpacks` 文件夹
-- **原版 / Fabric / Forge 实例** — 创建实例时可选原版、Fabric 或 Forge（Forge 走官方安装器，BMCLAPI 国内镜像兜底），每个实例拥有独立的存档、Mod 与光影
 - **下载管理** — 后台多任务下载，实时进度、取消、失败日志
-- **本地实例管理** — 实例切换 / 删除（移入回收站）、打开实例目录
+- **本地实例管理** — 实例切换 / 删除（移入回收站）、一键打开实例目录
 - **启动设置** — 离线玩家名、内存分配、Java 自动检测与自定义路径
-- **应用内更新** — 三处检查入口（首页状态卡 / 侧栏版本号 / 设置→关于），启动自动检查，发现新版本主动提示、后台下载、重启自动安装
+- **启动加速** — 启动前自动压缩系统内存工作集，设置页可手动立即优化（仅 Windows）
+- **应用内更新** — 三处检查入口（首页状态卡 / 侧栏版本号 / 设置→关于），启动自动检查、运行中每 2 小时复查，发现新版本主动提示、后台下载、重启自动安装；国内自动切换镜像
 - **外观主题** — 6 套强调色主题（翡翠绿/穹际蓝/星辉紫/暖阳橙/樱花粉/薄荷青），设置页一键切换、即时生效
 - **游戏语言自动汉化** — 启动前自动写入简体中文语言设置，新实例首次进入即为中文界面
 - **皮肤站账户登录** — 支持 LittleSkin 及任意 Yggdrasil 服务器（外置登录），多账户管理，进入在线服务器验证身份
-- **联机** — 局域网 IP 一键复制；集成 playit.gg 免费内网穿透隧道，跨网络联机
+- **联机** — 局域网 IP 一键复制；集成 cpolar 免费内网穿透隧道，跨网络联机
 
 ## 快速开始
 
-1. 从 [Releases](https://github.com/houshibo0101/HCL/releases) 下载 `HCL Setup 1.0.0.exe`（或 `release/win-unpacked/HCL.exe` 绿色版）
+1. 从 [Releases](https://github.com/houshibo0101/HCL/releases) 下载 `HCL-Setup-1.7.13.exe`（或 `release/win-unpacked/HCL.exe` 绿色版）
 2. 安装并运行；Windows SmartScreen 提示时选择“更多信息 → 仍要运行”（安装包未做代码签名）
 3. 在“游戏版本”页选择版本创建实例，然后回首页点击“启动游戏”
 
-> 系统要求：Windows 10/11（64 位）或 macOS 12+；Minecraft 1.20.5+ 建议 Java 21，较新版本建议 Java 17；未检测到 Java 时可在“设置”页一键获取。macOS 安装包由 GitHub Actions 自动构建（未签名，首次打开需右键 → 打开）。
+> 系统要求：Windows 10/11（64 位）或 macOS 12+。Java 无需手动准备：1.16.5 及以下需要 Java 8，1.17–1.20.4 需要 Java 17，1.20.5 及以上需要 Java 21，启动器会自动匹配并下载。macOS 安装包由 GitHub Actions 自动构建（未签名，首次打开需右键 → 打开）。
 
 ## 数据目录
 
-所有游戏数据保存在 D 盘，不写入 C 盘用户目录：
+Windows 默认所有游戏数据保存在 D 盘（没有 D 盘时落到 `%APPDATA%\HCL\data`）：
 
 ```
 D:\HCL\data
 ├── games\instances\<实例>\   # 游戏实例（versions / assets / libraries / mods / shaderpacks / saves）
+├── runtime\                  # 自动下载的 Java（java-8 / java-17 / java-21）
 ├── logs\error.log            # 下载/安装失败日志
 ├── settings.json             # 启动器设置
-└── instances.json            # 实例列表
+├── instances.json            # 实例列表
+└── accounts.json             # 游戏账户（离线 / 皮肤站）
 ```
 
 ## 从源码构建
@@ -50,19 +56,23 @@ npm install --registry=https://registry.npmmirror.com
 set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 
 npm run dev     # 开发调试
-npm run build   # 构建前端
+npm run build   # 构建前端（生产构建自动注入 CSP）
 npm run dist    # 打包 Windows 安装程序（输出到 release/）
+npm run lint    # ESLint（electron/、src/ 含 .jsx、scripts/）
+npm test        # 纯函数单测（版本号 / Java 匹配 / 离线 UUID / 架构映射）
+npm run docs    # 从 wiki/ 生成 docs/（GitHub Pages 版本）
 ```
 
-详细文档见 [Wiki](https://github.com/houshibo0101/HCL/wiki)。
+详细文档见 [Wiki](https://github.com/houshibo0101/HCL/wiki)，或阅读 `docs/`（由 `npm run docs` 从 wiki 生成）。
 
 ## 技术栈与数据来源
 
 - Electron + React + Vite
 - 游戏版本：Mojang 官方 version manifest / piston-meta
 - Mod / 光影：Modrinth API
-- Fabric 加载器：FabricMC meta API
-- Forge 加载器：Forge 官方 Maven + BMCLAPI 镜像
+- Fabric / Quilt 加载器：FabricMC / QuiltMC meta API
+- Forge / NeoForge 加载器：官方 Maven + BMCLAPI 镜像
+- Java 运行时：Adoptium（国内走清华 TUNA 镜像）
 
 ## 免责声明
 
