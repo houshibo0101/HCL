@@ -1808,10 +1808,12 @@ function openExternalSafe(url) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1100,
-    minHeight: 700,
+    // 2.1：默认窗口收小到 1180×760，不再一打开就逼近全屏；布局按此尺寸重新适配
+    width: 1180,
+    height: 760,
+    minWidth: 1024,
+    minHeight: 660,
+    center: true,
     frame: process.platform === 'darwin',
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 12 } } : {}),
     backgroundColor: THEME_BACKGROUNDS[settings.theme] || THEME_BACKGROUNDS.green,
@@ -1834,10 +1836,28 @@ function createWindow() {
     bootNotice = null;
   });
   if (process.env.HCL_CAPTURE_PATH) {
-    // 仅用于开发/截图对比：HCL_CAPTURE_PAGE 可先切到指定页面再截图
+    // 仅用于开发/截图对比：HCL_CAPTURE_PAGE 可先切到指定页面再截图，HCL_CAPTURE_CSS 可注入一份候选皮肤
     mainWindow.webContents.once('did-finish-load', async () => {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       try {
+        if (process.env.HCL_CAPTURE_SIZE) {
+          const [w, h] = String(process.env.HCL_CAPTURE_SIZE).split('x').map(Number);
+          if (w > 0 && h > 0) {
+            mainWindow.setContentSize(w, h);
+            await new Promise((resolve) => setTimeout(resolve, 600));
+          }
+        }
+        if (process.env.HCL_CAPTURE_CSS) {
+          const skin = await fsp.readFile(process.env.HCL_CAPTURE_CSS, 'utf8');
+          await mainWindow.webContents.executeJavaScript(`(() => {
+            const style = document.createElement('style');
+            style.dataset.hclSkin = 'capture';
+            style.textContent = ${JSON.stringify(skin)};
+            document.head.appendChild(style);
+            return style.textContent.length;
+          })()`);
+          await new Promise((resolve) => setTimeout(resolve, 400));
+        }
         const page = process.env.HCL_CAPTURE_PAGE;
         if (page) {
           const label = JSON.stringify(String(page));
@@ -1849,6 +1869,9 @@ function createWindow() {
           })()`);
           await new Promise((resolve) => setTimeout(resolve, 1100));
         }
+        // 把鼠标移开，避免 hover 态影响截图对比
+        mainWindow.webContents.sendInputEvent({ type: 'mouseMove', x: 4, y: 4 });
+        await new Promise((resolve) => setTimeout(resolve, 200));
         const image = await mainWindow.webContents.capturePage();
         await fsp.writeFile(process.env.HCL_CAPTURE_PATH, image.toPNG());
       } catch (error) {

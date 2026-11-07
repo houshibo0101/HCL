@@ -2,7 +2,7 @@
 
 一个简洁、清爽的 Minecraft 启动器。专注于游戏与社区内容，不做多余的事情。
 
-当前版本 **v2.0.0** · [下载](https://github.com/houshibo0101/HCL/releases/latest) · [文档](https://github.com/houshibo0101/HCL/wiki) · [问题反馈](https://github.com/houshibo0101/HCL/issues)
+当前版本 **v2.1.0** · [下载](https://github.com/houshibo0101/HCL/releases/latest) · [文档](https://github.com/houshibo0101/HCL/wiki) · [问题反馈](https://github.com/houshibo0101/HCL/issues)
 
 ![HCL 主界面](docs/preview.png)
 
@@ -19,14 +19,15 @@
 - **启动设置** — 离线玩家名、内存分配、Java 自动检测与自定义路径
 - **启动加速** — 启动前自动压缩系统内存工作集，设置页可手动立即优化（仅 Windows）
 - **应用内更新** — 三处检查入口（首页状态卡 / 侧栏版本号 / 设置→关于），启动自动检查、运行中每 2 小时复查，发现新版本主动提示、后台下载、重启自动安装；国内自动切换镜像
-- **外观主题** — 6 套强调色主题（翡翠绿/穹际蓝/星辉紫/暖阳橙/樱花粉/薄荷青），设置页一键切换、即时生效
+- **外观主题** — 「钢蓝」设计系统 + 6 套强调色主题（翡翠绿/穹际蓝/星辉紫/暖阳橙/樱花粉/薄荷青），设置页一键切换、即时生效
+- **窗口尺寸** — 默认 1180×760 居中启动，不再铺满屏幕，可自由缩放
 - **游戏语言自动汉化** — 启动前自动写入简体中文语言设置，新实例首次进入即为中文界面
 - **皮肤站账户登录** — 支持 LittleSkin 及任意 Yggdrasil 服务器（外置登录），多账户管理，进入在线服务器验证身份
 - **联机** — 局域网 IP 一键复制；集成 cpolar 免费内网穿透隧道，跨网络联机
 
 ## 快速开始
 
-1. 从 [Releases](https://github.com/houshibo0101/HCL/releases) 下载 `HCL-Setup-2.0.0.exe`（或 `release/win-unpacked/HCL.exe` 绿色版）
+1. 从 [Releases](https://github.com/houshibo0101/HCL/releases) 下载 `HCL-Setup-2.1.0.exe`（或 `release/win-unpacked/HCL.exe` 绿色版）
 2. 安装并运行；Windows SmartScreen 提示时选择“更多信息 → 仍要运行”（安装包未做代码签名）
 3. 在“游戏版本”页选择版本创建实例，然后回首页点击“启动游戏”
 
