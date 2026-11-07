@@ -26,6 +26,10 @@ const injectCsp = () => ({
 export default defineConfig({
   plugins: [react(), injectCsp()],
   base: './',
+  server: {
+    // 只关心渲染层源码：electron/ 与构建产物里的临时文件会干扰文件监听
+    watch: { ignored: ['**/electron/**', '**/release/**', '**/data/**', '**/dist/**', '**/.*.tmpdir/**'] },
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,

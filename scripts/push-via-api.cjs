@@ -42,13 +42,20 @@ async function main() {
   void localBaseTree;
   const message = execSync('git log -1 --pretty=%B').toString().trim();
 
-  // 3. blobs
+  // 3. blobs（本地已删除的文件用 sha: null 表示删除）
   const tree = [];
   for (const file of files) {
-    const content = fs.readFileSync(path.resolve(file));
+    const normalized = file.replace(/\\/g, '/');
+    const absolute = path.resolve(file);
+    if (!fs.existsSync(absolute)) {
+      tree.push({ path: normalized, mode: '100644', type: 'blob', sha: null });
+      console.log('delete:', normalized);
+      continue;
+    }
+    const content = fs.readFileSync(absolute);
     const blob = await req(`/repos/${REPO}/git/blobs`, { method: 'POST', body: JSON.stringify({ content: content.toString('base64'), encoding: 'base64' }) });
-    tree.push({ path: file.replace(/\\/g, '/'), mode: '100644', type: 'blob', sha: blob.sha });
-    console.log('blob:', file, blob.sha.slice(0, 7));
+    tree.push({ path: normalized, mode: '100644', type: 'blob', sha: blob.sha });
+    console.log('blob:', normalized, blob.sha.slice(0, 7));
   }
 
   // 4. tree -> commit -> ref

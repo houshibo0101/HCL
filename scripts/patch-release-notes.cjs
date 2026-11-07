@@ -5,6 +5,31 @@ const REPO = 'houshibo0101/HCL';
 const API = 'https://api.github.com';
 
 const NOTES = {
+  '2.0.0': `## HCL 2.0：结构升级与全新界面
+
+### 更省磁盘
+- **游戏资源改为全局共享**：\`assets\` / \`libraries\` 从每个实例目录移到 \`data\\shared\\\`，同一版本建多个实例只占一份磁盘
+- 升级后首次启动**自动迁移**旧实例资源（同名同大小文件直接复用，跨盘自动降级为复制），迁移完成会弹一次提示
+- 实测：1.12.2 实例目录由约 200 MB 降到约 19 MB
+
+### 更好看
+- 全新视觉：更深的背景层次、统一卡片表面与细描边、更大的标题与留白、胶囊式导航选中态
+- Hero 区重做、渐变主按钮、卡片悬停与阴影统一、标签改为胶囊样式
+- 粘性设置侧栏、新版滚动条与焦点环
+
+### 更稳
+- **断点续传**：下载中断后从断点继续，不再从头重下；同一文件的并发请求自动合并
+- **令牌加密**：皮肤站 accessToken 与 cpolar authtoken 使用系统密钥（DPAPI）加密落盘，旧明文自动迁移
+- 继续保留 1.7.13 的 SHA1 校验、单实例锁、配置原子写入、渲染进程沙箱与 CSP
+
+### 工程
+- \`App.jsx\` 拆分为 \`pages/\` + \`components/\` + \`lib/\` 共 11 个模块；下载任务改独立状态源，进度不再触发全应用重渲染
+- 新增 GitHub Actions **CI**（lint + test + build）与 **MIT LICENSE**
+- 纯函数与迁移逻辑补了单测（13 组用例）
+
+> 兼容性说明：数据目录新增 \`data\\shared\\\`，首次启动会自动迁移，无需手动操作；回滚到 1.7.x 需重新登录皮肤站账户。
+
+下载：[HCL-Setup-2.0.0.exe](https://github.com/houshibo0101/HCL/releases/download/v2.0.0/HCL-Setup-2.0.0.exe)（macOS 包由 CI 构建）`,
   '1.7.13': `## 可靠性维护与安全加固
 
 - **修复 Forge / NeoForge 安装必失败**：v1.7.12 中 Forge 官方安装器跑完后写版本目录会抛 \`Assignment to constant variable\`，导致所有 Forge / NeoForge 实例安装失败，现已修复

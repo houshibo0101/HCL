@@ -1,0 +1,9 @@
+import {
+  MapIcon, Puzzle, FolderOpen, Pickaxe, Plus, Trash2,
+} from 'lucide-react';
+import { formatDate } from '../lib/format';
+import { Modal, EmptyState, IconButton } from './chrome';
+
+export function InstanceModal({ instances, selectedId, onClose, onSelect, onDelete, onOpenFolder, onNew }) {
+  return <Modal title="我的游戏实例" subtitle="每个实例都有独立的存档、Mod 与光影文件" onClose={onClose} wide><div className="instance-modal-list">{instances.map((instance) => <div className={`instance-modal-row ${selectedId === instance.id ? 'selected' : ''}`} key={instance.id}><button className="instance-select" onClick={() => { onSelect(instance.id); onClose(); }}><div className="instance-modal-icon"><Pickaxe size={22} /></div><div><strong>{instance.name}</strong><span>Minecraft {instance.version} · {instance.loader === 'Vanilla' ? '原版' : instance.loader}</span><small>最近游玩：{formatDate(instance.lastPlayed)}</small></div>{selectedId === instance.id && <span className="current-tag">当前实例</span>}</button><div className="instance-row-actions"><IconButton title="打开游戏文件夹" onClick={() => onOpenFolder('instance', instance.id)}><FolderOpen size={17} /></IconButton><IconButton title="打开地图文件夹（存档）" onClick={() => onOpenFolder('saves', instance.id)}><MapIcon size={17} /></IconButton>{instance.loader !== 'Vanilla' && <IconButton title="打开 Mod 文件夹" onClick={() => onOpenFolder('mods', instance.id)}><Puzzle size={17} /></IconButton>}<IconButton title="删除实例" className="danger" onClick={() => { if (window.confirm(`确定删除“${instance.name}”吗？\n该实例的存档、Mod 和配置都会移入回收站。`)) onDelete(instance.id); }}><Trash2 size={17} /></IconButton></div></div>)}{!instances.length && <EmptyState title="还没有游戏实例" text="先安装一个 Minecraft 版本。" />}</div><footer className="modal-footer"><span className="modal-hint">删除实例会同时删除其中的存档，请谨慎操作。</span><button className="button primary small" onClick={() => { onClose(); onNew(); }}><Plus size={15} />新建实例</button></footer></Modal>;
+}

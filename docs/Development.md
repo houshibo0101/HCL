@@ -44,7 +44,8 @@ npm run build   # 构建前端到 dist/（生产构建会自动注入 CSP）
 npm run start   # 以生产方式启动（需先 build）
 npm run dist    # 打包 Windows 安装程序，输出到 release/
 npm run lint    # ESLint 检查 electron/、src/（含 .jsx）、scripts/
-npm test        # 纯函数单测（版本号 / Java 匹配 / 离线 UUID / 架构映射）
+npm test        # 单测（版本号 / Java 匹配 / 离线 UUID / 架构映射 / 资源迁移）
+npm run capture # 批量截取各页面，做 UI 改动前后对比
 npm run docs    # 从 wiki/ 生成 docs/（GitHub Pages 版本），别直接改 docs/
 ```
 
@@ -63,18 +64,23 @@ HCL/
 │   │                  #   游戏启动、账户（离线/Yggdrasil）、联机（cpolar）、
 │   │                  #   Java 检测与自动下载、electron-updater 自动更新
 │   ├── lib/
-│   │   └── version-utils.cjs # 纯函数：版本号比较、Java 匹配、离线 UUID、架构映射（可单测）
+│   │   ├── version-utils.cjs    # 纯函数：版本号比较、Java 匹配、离线 UUID、架构映射
+│   │   └── shared-migration.cjs # 旧实例 assets/libraries → data/shared 迁移
 │   └── preload.cjs    # 预加载：contextBridge 暴露 window.hcl API（sandbox 下运行）
 ├── src/
 │   ├── main.jsx       # React 入口
-│   ├── App.jsx        # 全部页面组件（首页/版本/Mod/光影/下载/联机/设置）
+│   ├── App.jsx        # 应用外壳：侧栏、标题栏、页面路由、全局状态
+│   ├── constants.js   # 主题、导航、页面文案常量
+│   ├── components/    # 通用组件（chrome：Logo/IconButton/Modal/EmptyState，InstanceModal）
+│   ├── pages/         # 六个页面：首页 / 版本 / 资源 / 联机 / 下载 / 设置
+│   ├── lib/           # format.js 格式化、task-store.js 下载任务状态源
 │   ├── modDictionary.js # Mod/光影中英映射词表（中文搜索与汉化）
-│   └── styles.css     # 全局样式（CSS 变量主题系统，6 套 data-theme）
+│   └── styles.css     # 全局样式（CSS 变量主题系统 + 2.0 刷新层）
 ├── public/            # 静态资源（图标、英雄区插画）
-├── scripts/           # 辅助脚本（push-via-api.cjs 备用推送通道、test-version-utils.cjs、sync-docs.cjs）
+├── scripts/           # 辅助脚本（push-via-api / sync-docs / test-* / capture-pages）
 ├── wiki/              # 本 Wiki 源文件（推送到 GitHub Wiki）
 ├── docs/              # GitHub Pages 版文档（由 npm run docs 从 wiki/ 生成）
-├── .github/workflows/release-mac.yml  # tag 触发的 macOS CI
+├── .github/workflows/ # ci.yml（lint+test+build）、release-mac.yml、deploy-docs.yml
 ├── dist/              # 构建输出（gitignore）
 └── release/           # 打包输出（gitignore）
 ```

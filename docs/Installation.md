@@ -54,11 +54,12 @@ Windows 默认所有数据保存在 **D 盘**；无 D 盘的机器自动落到 `
 ```
 D:\HCL\
 └── data\
+    ├── shared\
+    │   ├── assets\            # 游戏资源（所有实例共用，按哈希去重）
+    │   └── libraries\         # 运行库（所有实例共用）
     ├── games\
     │   └── instances\<实例ID>\
     │       ├── versions\      # 版本 JSON 与客户端 jar
-    │       ├── libraries\     # 运行库
-    │       ├── assets\        # 游戏资源
     │       ├── mods\          # Mod 文件
     │       ├── shaderpacks\   # 光影文件
     │       ├── saves\         # 存档
@@ -68,8 +69,10 @@ D:\HCL\
     ├── logs\error.log         # 下载/安装失败日志
     ├── settings.json          # 启动器设置
     ├── instances.json         # 实例列表
-    └── accounts.json          # 游戏账户（离线 / 皮肤站）
+    └── accounts.json          # 游戏账户（离线 / 皮肤站，令牌加密存储）
 ```
+
+> **2.0.0 起** `assets` / `libraries` 由 `data\shared\` 统一管理：同一版本建多个实例只占一份磁盘。升级后首次启动会把旧实例里的资源自动迁移过去，实例目录不会再有这两个文件夹。
 
 可在 **设置 → 存储位置** 修改游戏目录；修改后只影响之后新建的实例。
 

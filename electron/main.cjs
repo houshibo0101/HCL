@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -13,6 +13,7 @@ const {
   compareBuildDesc, isNewerVersion, legacyLangCode, nativeArchName, nativeClassifierSuffix,
   offlineUuid, parseJavaMajor, pickDownloadMajor, requiredJavaMajorFallback,
 } = require('./lib/version-utils.cjs');
+const { migrateInstance } = require('./lib/shared-migration.cjs');
 
 const isDev = !app.isPackaged;
 const DATA_ROOT = process.env.HCL_DATA_DIR || (process.platform === 'win32' && fs.existsSync('D:\\') ? 'D:\\HCL\\data' : path.join(app.getPath('userData'), 'data'));
@@ -20,14 +21,20 @@ const SETTINGS_FILE = path.join(DATA_ROOT, 'settings.json');
 const INSTANCES_FILE = path.join(DATA_ROOT, 'instances.json');
 const ACCOUNTS_FILE = path.join(DATA_ROOT, 'accounts.json');
 const CACHE_DIR = path.join(DATA_ROOT, 'cache');
+// 游戏资源全局共享：同一个版本的 assets / libraries 只存一份，实例目录只放自己的东西
+const SHARED_DIR = path.join(DATA_ROOT, 'shared');
+const SHARED_ASSETS = path.join(SHARED_DIR, 'assets');
+const SHARED_LIBRARIES = path.join(SHARED_DIR, 'libraries');
 let accounts = [];
 const MANIFEST_URL = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json';
 const USER_AGENT = 'HCL/1.0 (Minecraft Launcher)';
 let mainWindow;
 let settings;
 let instances = [];
+let bootNotice = null;
 const tasks = new Map();
 const controllers = new Map();
+const downloadsInFlight = new Map();
 const gameProcesses = new Map();
 
 const defaultSettings = () => ({
@@ -76,12 +83,42 @@ async function ensureStorage() {
     settings.currentAccountId = accounts[0].id;
     await writeJsonAtomic(SETTINGS_FILE, settings);
   }
+  // 迁移历史明文令牌：读取时加密，写回一次即可，之后每次启动都是幂等的
+  const secretUpdates = [];
+  for (const account of accounts) {
+    const encrypted = encryptSecret(account.accessToken);
+    if (encrypted !== account.accessToken) { account.accessToken = encrypted; secretUpdates.push(account.id); }
+  }
+  if (settings.cpolarAuthToken) {
+    const encrypted = encryptSecret(settings.cpolarAuthToken);
+    if (encrypted !== settings.cpolarAuthToken) { settings.cpolarAuthToken = encrypted; secretUpdates.push('cpolar'); }
+  }
+  if (secretUpdates.length) {
+    await writeJsonAtomic(ACCOUNTS_FILE, accounts);
+    await writeJsonAtomic(SETTINGS_FILE, settings);
+  }
   await writeJsonAtomic(ACCOUNTS_FILE, accounts);
   await fsp.mkdir(settings.gameDirectory, { recursive: true });
+  await fsp.mkdir(SHARED_ASSETS, { recursive: true });
+  await fsp.mkdir(SHARED_LIBRARIES, { recursive: true });
+  const migratedInstances = await migrateInstancesToShared();
+  if (migratedInstances) {
+    bootNotice = `已把 ${migratedInstances} 个旧实例的游戏资源移动到共享目录，相同版本不再重复占空间`;
+  }
 }
 
 function saveAccounts() {
   return writeJsonAtomic(ACCOUNTS_FILE, accounts);
+}
+
+// ---- 2.0.0：老实例内嵌的 assets / libraries 迁移到全局共享目录 ----
+async function migrateInstancesToShared() {
+  let migrated = 0;
+  for (const instance of instances) {
+    if (!instance?.gameDir) continue;
+    if (await migrateInstance(instance.gameDir, SHARED_ASSETS, SHARED_LIBRARIES)) migrated += 1;
+  }
+  return migrated;
 }
 
 function send(channel, data) {
@@ -120,6 +157,26 @@ async function writeJsonAtomic(file, data) {
   const temporary = `${file}.${process.pid}.${Date.now().toString(36)}.tmp`;
   await fsp.writeFile(temporary, JSON.stringify(data, null, 2));
   await fsp.rename(temporary, file);
+}
+
+// 敏感字段（Yggdrasil accessToken、cpolar authtoken）用系统密钥加密后再落盘
+function encryptSecret(value) {
+  const text = String(value || '');
+  if (!text || text === '0' || text.startsWith('enc:')) return text;
+  try {
+    if (safeStorage.isEncryptionAvailable()) return `enc:${safeStorage.encryptString(text).toString('base64')}`;
+  } catch { /* 系统密钥不可用时退回明文，保证功能可用 */ }
+  return text;
+}
+
+function decryptSecret(value) {
+  const text = String(value || '');
+  if (!text.startsWith('enc:')) return text;
+  try {
+    return safeStorage.decryptString(Buffer.from(text.slice(4), 'base64'));
+  } catch {
+    return '';
+  }
 }
 
 const ERROR_LOG_FILE = path.join(DATA_ROOT, 'logs', 'error.log');
@@ -197,7 +254,16 @@ function sha1File(file) {
   });
 }
 
-async function downloadSingle(url, destination, { signal, onProgress, expectedSize = 0, sha1 = '' } = {}) {
+async function downloadSingle(url, destination, options = {}) {
+  // 同一目标并发下载合并成一次，避免多任务同时写同一个 .part
+  const running = downloadsInFlight.get(destination);
+  if (running) return running;
+  const promise = downloadSingleInner(url, destination, options).finally(() => downloadsInFlight.delete(destination));
+  downloadsInFlight.set(destination, promise);
+  return promise;
+}
+
+async function downloadSingleInner(url, destination, { signal, onProgress, expectedSize = 0, sha1 = '' } = {}) {
   if (await fileExists(destination, expectedSize)) {
     // 只有大小对得上还不够：清单里带 sha1 时再校验一次内容，避免半截/损坏文件被当成已完成
     if (!sha1 || (await sha1File(destination)) === String(sha1).toLowerCase()) {
@@ -208,12 +274,27 @@ async function downloadSingle(url, destination, { signal, onProgress, expectedSi
     await fsp.rm(destination, { force: true });
   }
   await fsp.mkdir(path.dirname(destination), { recursive: true });
-  const temporary = `${destination}.${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.part`;
-  const response = await fetch(url, { signal, headers: { 'User-Agent': USER_AGENT } });
-  if (!response.ok) throw new Error(`下载失败 (${response.status})：${path.basename(destination)}`);
+  // 固定的 .part 文件名是断点续传的前提：失败后保留，下次从已有字节数继续
+  const partial = `${destination}.part`;
+  let offset = 0;
+  try { offset = (await fsp.stat(partial)).size; } catch { offset = 0; }
+  const headers = { 'User-Agent': USER_AGENT };
+  if (offset > 0) headers.Range = `bytes=${offset}-`;
+  const response = await fetch(url, { signal, headers });
+  if (response.status === 416 && offset > 0) {
+    // 服务端认为这个区间已经结束（通常是上次刚好下完但没来得及改名）：丢掉重来
+    await fsp.rm(partial, { force: true });
+    return downloadSingleInner(url, destination, { signal, onProgress, expectedSize, sha1 });
+  }
+  if (!response.ok) {
+    await fsp.rm(partial, { force: true }).catch(() => {});
+    throw new Error(`下载失败 (${response.status})：${path.basename(destination)}`);
+  }
   if (!response.body) throw new Error('下载响应为空');
-  const total = Number(response.headers.get('content-length')) || expectedSize;
-  let received = 0;
+  const resumed = response.status === 206 && offset > 0;
+  if (!resumed) offset = 0;
+  const total = (Number(response.headers.get('content-length')) || 0) + offset || expectedSize;
+  let received = offset;
   let lastNotice = 0;
   const source = Readable.fromWeb(response.body);
   source.on('data', (chunk) => {
@@ -224,33 +305,32 @@ async function downloadSingle(url, destination, { signal, onProgress, expectedSi
       lastNotice = now;
     }
   });
-  try {
-    await pipeline(source, fs.createWriteStream(temporary));
-    if (total && received !== total) throw new Error('文件未完整下载，请重试');
-    if (sha1) {
-      const actual = await sha1File(temporary);
-      if (actual !== String(sha1).toLowerCase()) throw new Error(`文件校验失败（SHA1 不匹配）：${path.basename(destination)}`);
+  await pipeline(source, fs.createWriteStream(partial, { flags: resumed ? 'a' : 'w' }));
+  if (total && received !== total) throw new Error('文件未完整下载，请重试');
+  if (sha1) {
+    const actual = await sha1File(partial);
+    if (actual !== String(sha1).toLowerCase()) {
+      await fsp.rm(partial, { force: true }).catch(() => {});
+      throw new Error(`文件校验失败（SHA1 不匹配）：${path.basename(destination)}`);
     }
-    if (await fileExists(destination, expectedSize)) {
-      await fsp.rm(temporary, { force: true }).catch(() => {});
-      onProgress?.(received, total);
-      return { path: destination, size: received, skipped: true };
-    }
-    try {
-      await fsp.rename(temporary, destination);
-    } catch (renameError) {
-      if (renameError?.code === 'ENOENT' && await fileExists(destination)) {
-        // 同目标的并发任务刚完成下载，文件已就位，视为成功
-      } else {
-        throw renameError;
-      }
-    }
-  } catch (error) {
-    await fsp.rm(temporary, { force: true }).catch(() => {});
-    throw error;
   }
+  await moveIntoPlace(partial, destination);
   onProgress?.(received, total);
   return { path: destination, size: received, skipped: false };
+}
+
+async function moveIntoPlace(partial, destination) {
+  try {
+    await fsp.rename(partial, destination);
+  } catch (error) {
+    // Windows 上目标已存在时 rename 会失败，覆盖一次再试
+    if (['EPERM', 'EACCES', 'EEXIST', 'ENOTEMPTY'].includes(error?.code)) {
+      await fsp.rm(destination, { force: true });
+      await fsp.rename(partial, destination);
+      return;
+    }
+    throw error;
+  }
 }
 
 // 支持 url 或 urls（数组依次尝试）：官方源失败自动切换 BMCLAPI 镜像
@@ -352,9 +432,9 @@ function nativeSuffix() {
   return nativeClassifierSuffix(process.arch);
 }
 
-function libraryFiles(library, gameDir) {
+function libraryFiles(library, librariesRoot = SHARED_LIBRARIES) {
   if (!rulesAllow(library.rules)) return [];
-  const base = path.join(gameDir, 'libraries');
+  const base = librariesRoot;
   const result = [];
   if (library.downloads?.artifact) {
     const artifact = library.downloads.artifact;
@@ -674,7 +754,7 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null,
     const assetMeta = isInstallerLoader ? vanillaMeta : meta;
     const assetIndexUrl = assetMeta?.assetIndex?.url;
     if (!assetIndexUrl) throw new Error('此版本缺少资源索引');
-    const assetIndexPath = path.join(gameDir, 'assets', 'indexes', `${assetMeta.assetIndex.id}.json`);
+    const assetIndexPath = path.join(SHARED_ASSETS, 'indexes', `${assetMeta.assetIndex.id}.json`);
     await downloadFile(assetIndexUrl, assetIndexPath, { signal: controllers.get(taskId)?.signal, expectedSize: assetMeta.assetIndex.size, sha1: assetMeta.assetIndex.sha1 });
     const assetIndex = JSON.parse(await fsp.readFile(assetIndexPath, 'utf8'));
     // 资源索引中多个路径可能共用同一哈希，按目标路径去重，避免并发写同一文件
@@ -772,7 +852,7 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null,
       if (!meta.downloads?.client) throw new Error('此版本缺少客户端下载信息');
       pushDownload({ ...meta.downloads.client, destination: path.join(versionDir, `${runtimeVersion}.jar`), label: '游戏客户端' });
       for (const library of meta.libraries || []) {
-        for (const file of libraryFiles(library, gameDir)) {
+        for (const file of libraryFiles(library)) {
           const libUrls = [...new Set([file.url, mirrorLibUrl(file.url)].filter(Boolean))];
           if (pushDownload({ ...file, url: file.url, urls: libUrls, label: path.basename(file.destination) }) && file.native) {
             nativeLibraries.push(file.destination);
@@ -781,7 +861,7 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null,
       }
       if (meta.logging?.client?.file) {
         const logFile = meta.logging.client.file;
-        pushDownload({ ...logFile, destination: path.join(gameDir, 'assets', 'log_configs', logFile.id), label: '日志配置' });
+        pushDownload({ ...logFile, destination: path.join(SHARED_ASSETS, 'log_configs', logFile.id), label: '日志配置' });
       }
     }
     for (const [assetPath, object] of Object.entries(assetIndex.objects || {})) {
@@ -790,7 +870,7 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null,
         url: `https://resources.download.minecraft.net/${objectHash.slice(0, 2)}/${objectHash}`,
         size: object.size,
         sha1: objectHash,
-        destination: path.join(gameDir, 'assets', 'objects', objectHash.slice(0, 2), objectHash),
+        destination: path.join(SHARED_ASSETS, 'objects', objectHash.slice(0, 2), objectHash),
         label: `游戏资源 ${assetPath.split('/').pop() || objectHash.slice(0, 8)}`,
       });
     }
@@ -1109,7 +1189,7 @@ async function launchGame(instanceId) {
   const classpath = [];
   const nativeFiles = [];
   for (const library of meta.libraries || []) {
-    for (const file of libraryFiles(library, gameDir)) {
+    for (const file of libraryFiles(library)) {
       if (file.native) nativeFiles.push(file);
       else classpath.push(file.destination);
     }
@@ -1136,12 +1216,12 @@ async function launchGame(instanceId) {
   const account = accounts.find((a) => a.id === settings.currentAccountId) || accounts[0] || null;
   const username = (account?.name || settings.username || 'Player').trim() || 'Player';
   const authUuid = account?.type === 'yggdrasil' && account.uuid ? account.uuid : offlineUuid(username);
-  const authToken = account?.type === 'yggdrasil' && account.accessToken ? account.accessToken : '0';
+  const authToken = account?.type === 'yggdrasil' && account.accessToken ? decryptSecret(account.accessToken) : '0';
   const values = {
     auth_player_name: username,
     version_name: instance.version,
     game_directory: gameDir,
-    assets_root: path.join(gameDir, 'assets'),
+    assets_root: SHARED_ASSETS,
     assets_index_name: meta.assetIndex?.id || meta.assets,
     auth_uuid: authUuid,
     auth_access_token: authToken,
@@ -1154,8 +1234,8 @@ async function launchGame(instanceId) {
     launcher_version: app.getVersion(),
     classpath: classpath.join(path.delimiter),
     classpath_separator: path.delimiter,
-    library_directory: path.join(gameDir, 'libraries'),
-    game_assets: path.join(gameDir, 'assets'),
+    library_directory: SHARED_LIBRARIES,
+    game_assets: SHARED_ASSETS,
   };
   const replaceArgs = (args) => args.map((arg) => arg.replace(/\$\{([^}]+)\}/g, (_, key) => values[key] ?? ''));
   const jvmArgs = [`-Xmx${Number(settings.memory) || 4096}M`, '-Xms512M', '-Dfile.encoding=UTF-8'];
@@ -1356,7 +1436,7 @@ function registerIpc() {
     }
     const profile = data.selectedProfile || data.availableProfiles?.[0];
     if (!profile) throw new Error('该账号还没有创建角色，请先到皮肤站网站创建角色');
-    const account = { id: `ygg-${Date.now().toString(36)}`, type: 'yggdrasil', apiRoot: root, name: profile.name, uuid: profile.id, accessToken: data.accessToken, createdAt: Date.now() };
+    const account = { id: `ygg-${Date.now().toString(36)}`, type: 'yggdrasil', apiRoot: root, name: profile.name, uuid: profile.id, accessToken: encryptSecret(data.accessToken), createdAt: Date.now() };
     accounts = accounts.filter((a) => !(a.type === 'yggdrasil' && a.apiRoot === root && a.name === account.name));
     accounts.push(account);
     settings.currentAccountId = account.id;
@@ -1430,9 +1510,9 @@ function registerIpc() {
     if (cpolarChild) return { running: true };
     const exe = cpolarExePath();
     if (!fs.existsSync(exe)) throw new Error('请先下载 cpolar 隧道程序');
-    const trimmed = String(token || '').trim() || String(settings.cpolarAuthToken || '').trim();
+    const trimmed = String(token || '').trim() || decryptSecret(settings.cpolarAuthToken).trim();
     if (!trimmed) throw new Error('请先到 cpolar 官网注册并填写 authtoken');
-    settings.cpolarAuthToken = trimmed;
+    settings.cpolarAuthToken = encryptSecret(trimmed);
     await writeJsonAtomic(SETTINGS_FILE, settings);
     await fsp.writeFile(cpolarConfigPath(), `authtoken: ${trimmed}\nweb_addr: 127.0.0.1:${CPOLAR_WEB_PORT}\n`, 'utf8');
     const localPort = Math.min(65535, Math.max(1024, parseInt(port, 10) || 25565));
@@ -1747,10 +1827,28 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => mainWindow.show());
   if (isDev) mainWindow.loadURL('http://127.0.0.1:5173');
   else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  // 启动期的一次性提示（例如旧实例资源迁移完成）
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (!bootNotice) return;
+    send('app:toast', { message: bootNotice, type: 'info' });
+    bootNotice = null;
+  });
   if (process.env.HCL_CAPTURE_PATH) {
+    // 仅用于开发/截图对比：HCL_CAPTURE_PAGE 可先切到指定页面再截图
     mainWindow.webContents.once('did-finish-load', async () => {
-      await new Promise((resolve) => setTimeout(resolve, 2200));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
       try {
+        const page = process.env.HCL_CAPTURE_PAGE;
+        if (page) {
+          const label = JSON.stringify(String(page));
+          await mainWindow.webContents.executeJavaScript(`(() => {
+            const buttons = [...document.querySelectorAll('.main-nav button, .settings-nav')];
+            const target = buttons.find((b) => b.textContent.trim() === ${label});
+            if (target) target.click();
+            return Boolean(target);
+          })()`);
+          await new Promise((resolve) => setTimeout(resolve, 1100));
+        }
         const image = await mainWindow.webContents.capturePage();
         await fsp.writeFile(process.env.HCL_CAPTURE_PATH, image.toPNG());
       } catch (error) {
