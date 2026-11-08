@@ -2,7 +2,7 @@
 
 一个简洁、清爽的 Minecraft 启动器。专注于游戏与社区内容，不做多余的事情。
 
-当前版本 **v2.1.1** · [下载](https://github.com/houshibo0101/HCL/releases/latest) · [文档](https://github.com/houshibo0101/HCL/wiki) · [问题反馈](https://github.com/houshibo0101/HCL/issues)
+当前版本 **v2.1.2** · [下载](https://github.com/houshibo0101/HCL/releases/latest) · [文档](https://github.com/houshibo0101/HCL/wiki) · [问题反馈](https://github.com/houshibo0101/HCL/issues)
 
 ![HCL 主界面](docs/preview.png)
 
@@ -27,7 +27,7 @@
 
 ## 快速开始
 
-1. 从 [Releases](https://github.com/houshibo0101/HCL/releases) 下载 `HCL-Setup-2.1.1.exe`（或 `release/win-unpacked/HCL.exe` 绿色版）
+1. 从 [Releases](https://github.com/houshibo0101/HCL/releases) 下载 `HCL-Setup-2.1.2.exe`（或 `release/win-unpacked/HCL.exe` 绿色版）
 2. 安装并运行；Windows SmartScreen 提示时选择“更多信息 → 仍要运行”（安装包未做代码签名）
 3. 在“游戏版本”页选择版本创建实例，然后回首页点击“启动游戏”
 

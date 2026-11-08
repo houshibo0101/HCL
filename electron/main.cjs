@@ -9,7 +9,7 @@ const AdmZip = require('adm-zip');
 const { autoUpdater } = require('electron-updater');
 const {
   compareBuildDesc, isNewerVersion, legacyLangCode, nativeArchName, nativeClassifierSuffix,
-  offlineUuid, parseJavaMajor, pickDownloadMajor, requiredJavaMajorFallback,
+  offlineUuid, parseJavaMajor, requiredJavaMajorFallback, javaDownloadCandidates,
 } = require('./lib/version-utils.cjs');
 const { migrateInstance } = require('./lib/shared-migration.cjs');
 const { downloadFile } = require('./lib/downloader.cjs');
@@ -695,13 +695,16 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null,
       }
       if (installerError) throw installerError;
       let java;
-      const need = requiredJavaMajorFallback(version.id);
+      const need = vanillaMeta?.javaVersion?.majorVersion || requiredJavaMajorFallback(version.id);
       const usable = (await listJavas()).filter((item) => item.major >= need);
       if (usable.length) java = usable.sort((a, b) => a.major - b.major)[0];
       else if (settings.autoDownloadJava !== false) {
         updateTask(taskId, { detail: `未找到 Java ${need}，正在自动下载…` });
-        await downloadJavaRuntime(pickDownloadMajor(need));
-        java = (await listJavas()).filter((item) => item.major >= need).sort((a, b) => a.major - b.major)[0];
+        for (const major of javaDownloadCandidates(need)) {
+          try { await downloadJavaRuntime(major); } catch { continue; }
+          java = (await listJavas()).filter((item) => item.major >= need).sort((a, b) => a.major - b.major)[0];
+          if (java) break;
+        }
       }
       if (!java) {
         const error = new Error(`安装 ${loader} 需要先安装 Java ${need}，请到“设置 → Java 环境”配置或开启自动下载`);
@@ -951,13 +954,19 @@ async function downloadJavaRuntime(major) {
     const osName = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'mac' : 'linux';
     const archName = process.arch === 'arm64' ? 'aarch64' : 'x64';
     updateTask(taskId, { detail: '正在查询 Adoptium 版本信息…', progress: 2 });
-    const info = await fetchJson(`https://api.adoptium.net/v3/assets/latest/${major}/hotspot?architecture=${archName}&image_type=jre&os=${osName}&project=jdk`);
-    const asset = Array.isArray(info) ? info.find((item) => item?.binary?.package?.link) : null;
-    if (!asset) throw new Error(`未找到 Java ${major} 运行时（Adoptium）`);
+    // 优先 JRE（体积小），该版本没有 JRE 时退回 JDK
+    let asset = null;
+    let imageType = 'jre';
+    for (const type of ['jre', 'jdk']) {
+      const info = await fetchJson(`https://api.adoptium.net/v3/assets/latest/${major}/hotspot?architecture=${archName}&image_type=${type}&os=${osName}&project=jdk`).catch(() => null);
+      const found = Array.isArray(info) ? info.find((item) => item?.binary?.package?.link) : null;
+      if (found) { asset = found; imageType = type; break; }
+    }
+    if (!asset) throw new Error(`Adoptium 上没有 Java ${major} 的运行时（可能版本太新或已下架）`);
     const packageName = asset.binary.package.name;
     const links = [];
     if (osName === 'windows' || osName === 'mac') {
-      links.push(`https://mirrors.tuna.tsinghua.edu.cn/Adoptium/${major}/jre/${archName}/${osName}/${packageName}`);
+      links.push(`https://mirrors.tuna.tsinghua.edu.cn/Adoptium/${major}/${imageType}/${archName}/${osName}/${packageName}`);
     }
     links.push(asset.binary.package.link, `https://ghproxy.net/${asset.binary.package.link}`);
     const runtimeRoot = JAVA_MANAGED_ROOT;
@@ -1017,15 +1026,25 @@ async function resolveJavaForInstance(instance) {
     error.code = 'NO_JAVA';
     throw error;
   }
-  await downloadJavaRuntime(pickDownloadMajor(required));
-  const after = (await listJavas()).filter((item) => item.major >= required);
-  if (!after.length) {
-    const error = new Error(`Java ${required} 自动下载后仍不可用，请到“设置 → Java 环境”手动配置`);
-    error.code = 'NO_JAVA';
-    throw error;
+  const candidates = javaDownloadCandidates(required);
+  let lastError = null;
+  for (const major of candidates) {
+    try {
+      await downloadJavaRuntime(major);
+    } catch (error) {
+      lastError = error;
+      continue;
+    }
+    const after = (await listJavas()).filter((item) => item.major >= required);
+    if (after.length) {
+      after.sort((a, b) => a.major - b.major);
+      return { java: after[0], required, downloaded: true };
+    }
   }
-  after.sort((a, b) => a.major - b.major);
-  return { java: after[0], required, downloaded: true };
+  const detail = lastError ? `：${lastError.message}` : '';
+  const error = new Error(`这个实例需要 Java ${required}，自动下载失败${detail}。可到“设置 → Java 环境”手动指定 java.exe，或稍后重试`);
+  error.code = 'NO_JAVA';
+  throw error;
 }
 
 function argumentValues(items, features = {}) {

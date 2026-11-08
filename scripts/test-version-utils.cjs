@@ -1,7 +1,7 @@
 // 版本号 / Java 版本纯函数单测：node scripts/test-version-utils.cjs
 const assert = require('assert');
 const {
-  parseJavaMajor, requiredJavaMajorFallback, pickDownloadMajor, compareBuildDesc,
+  parseJavaMajor, requiredJavaMajorFallback, pickDownloadMajor, javaDownloadCandidates, compareBuildDesc,
   isNewerVersion, legacyLangCode, offlineUuid, nativeArchName, nativeClassifierSuffix,
 } = require('../electron/lib/version-utils.cjs');
 
@@ -33,6 +33,21 @@ check('pickDownloadMajor 不会去下载不存在的 Java 16', () => {
   eq(pickDownloadMajor(16), 17, '16 → 17');
   eq(pickDownloadMajor(17), 17, '17');
   eq(pickDownloadMajor(21), 21, '21');
+});
+
+check('pickDownloadMajor 对 Java 25 这类新版本按实际要求下载', () => {
+  eq(pickDownloadMajor(25), 25, '25');
+  eq(pickDownloadMajor(24), 24, '24');
+  eq(pickDownloadMajor(30), 30, '30');
+});
+
+check('javaDownloadCandidates 先精确版本、再退到更新的 LTS', () => {
+  eq(javaDownloadCandidates(25), [25], '25 没有更新的回退');
+  eq(javaDownloadCandidates(24), [24, 25], '24 可以退到 25');
+  eq(javaDownloadCandidates(22), [22, 25], '22 可以退到 25');
+  eq(javaDownloadCandidates(21), [21, 25], '21 可以退到 25');
+  eq(javaDownloadCandidates(17), [17], '17 不做升级回退');
+  eq(javaDownloadCandidates(8), [8], '8 不做升级回退');
 });
 
 check('compareBuildDesc 新版本排在前面', () => {

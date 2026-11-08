@@ -5,6 +5,25 @@ const REPO = 'houshibo0101/HCL';
 const API = 'https://api.github.com';
 
 const NOTES = {
+  '2.1.2': `## 修复：需要 Java 22+ 的版本无法自动安装 Java
+
+### 问题
+26.x 快照要求 Java 25，但启动器的下载策略把 18 以上一律当成 21，于是只下了 Java 21，再按「>= 25」校验自然找不到，直接报"Java 25 自动下载后仍不可用"。
+
+### 修复
+- 按游戏实际要求下载：要求 25 就下 25，不再降级到 21
+- 回退顺序改为「要求版本 → 更新的 LTS」（例如要求 22 时依次试 22、25）
+- 优先 JRE（约 56 MB），没有 JRE 时自动改用 JDK
+- Forge / NeoForge 安装器改为读取版本 JSON 的 \`javaVersion\`，不再按版本号猜
+- 失败提示会带上真实原因（找不到该版本 / 下载失败）
+
+### 验证
+- 新增 Java 版本选择单测，10 组全过
+- 真实下载 Adoptium Java 25（清华镜像）：56 MB / 13.7 秒，解压后 \`java -version\` = 25.0.5，主版本识别为 25
+
+> 升级后重试启动即可，已下载的 Java 21 不会浪费，遇到需要旧版本的实例仍会复用它。
+
+下载：[HCL-Setup-2.1.2.exe](https://github.com/houshibo0101/HCL/releases/download/v2.1.2/HCL-Setup-2.1.2.exe)（macOS 包由 CI 构建）`,
   '2.1.1': `## 修复：个别资源校验失败会中断整个安装
 
 ### 问题

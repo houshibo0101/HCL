@@ -26,7 +26,19 @@ function pickDownloadMajor(required) {
   if (required <= 8) return 8;
   if (required <= 11) return 11;
   if (required <= 17) return 17;
-  return 21;
+  // 21 / 25 这类新版本不能一律降到 21：游戏要求多少就下多少，否则装完仍跑不起来
+  return required;
+}
+
+// 自动下载的候选版本：先试游戏要求的版本，失败再试更新的 LTS
+function javaDownloadCandidates(required) {
+  const list = [pickDownloadMajor(required)];
+  if (required >= 18) {
+    for (const major of [25, 21]) {
+      if (major > required && !list.includes(major)) list.push(major);
+    }
+  }
+  return list;
 }
 
 // Forge / NeoForge 构建号倒序比较（放在前面的是更新的）
@@ -77,6 +89,7 @@ module.exports = {
   parseJavaMajor,
   requiredJavaMajorFallback,
   pickDownloadMajor,
+  javaDownloadCandidates,
   compareBuildDesc,
   isNewerVersion,
   legacyLangCode,
