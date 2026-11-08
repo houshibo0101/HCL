@@ -5,8 +5,6 @@ const fsp = fs.promises;
 const os = require('os');
 const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
-const { Readable } = require('stream');
-const { pipeline } = require('stream/promises');
 const AdmZip = require('adm-zip');
 const { autoUpdater } = require('electron-updater');
 const {
@@ -14,6 +12,7 @@ const {
   offlineUuid, parseJavaMajor, pickDownloadMajor, requiredJavaMajorFallback,
 } = require('./lib/version-utils.cjs');
 const { migrateInstance } = require('./lib/shared-migration.cjs');
+const { downloadFile } = require('./lib/downloader.cjs');
 
 const isDev = !app.isPackaged;
 const DATA_ROOT = process.env.HCL_DATA_DIR || (process.platform === 'win32' && fs.existsSync('D:\\') ? 'D:\\HCL\\data' : path.join(app.getPath('userData'), 'data'));
@@ -34,7 +33,6 @@ let instances = [];
 let bootNotice = null;
 const tasks = new Map();
 const controllers = new Map();
-const downloadsInFlight = new Map();
 const gameProcesses = new Map();
 
 const defaultSettings = () => ({
@@ -227,15 +225,6 @@ async function fetchJson(url, options = {}) {
   throw lastError;
 }
 
-async function fileExists(file, expectedSize) {
-  try {
-    const stat = await fsp.stat(file);
-    return stat.isFile() && (!expectedSize || stat.size === expectedSize);
-  } catch {
-    return false;
-  }
-}
-
 function mirrorLibUrl(url) {
   // BMCLAPI 对 Fabric Maven 与 Mojang libraries 的镜像
   return String(url || '')
@@ -244,110 +233,7 @@ function mirrorLibUrl(url) {
     .replace('https://meta.fabricmc.net', 'https://bmclapi2.bangbang93.com/fabric-meta');
 }
 
-function sha1File(file) {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash('sha1');
-    const stream = fs.createReadStream(file);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('error', reject);
-    stream.on('end', () => resolve(hash.digest('hex')));
-  });
-}
-
-async function downloadSingle(url, destination, options = {}) {
-  // 同一目标并发下载合并成一次，避免多任务同时写同一个 .part
-  const running = downloadsInFlight.get(destination);
-  if (running) return running;
-  const promise = downloadSingleInner(url, destination, options).finally(() => downloadsInFlight.delete(destination));
-  downloadsInFlight.set(destination, promise);
-  return promise;
-}
-
-async function downloadSingleInner(url, destination, { signal, onProgress, expectedSize = 0, sha1 = '' } = {}) {
-  if (await fileExists(destination, expectedSize)) {
-    // 只有大小对得上还不够：清单里带 sha1 时再校验一次内容，避免半截/损坏文件被当成已完成
-    if (!sha1 || (await sha1File(destination)) === String(sha1).toLowerCase()) {
-      const stat = await fsp.stat(destination);
-      onProgress?.(stat.size, stat.size);
-      return { path: destination, size: stat.size, skipped: true };
-    }
-    await fsp.rm(destination, { force: true });
-  }
-  await fsp.mkdir(path.dirname(destination), { recursive: true });
-  // 固定的 .part 文件名是断点续传的前提：失败后保留，下次从已有字节数继续
-  const partial = `${destination}.part`;
-  let offset = 0;
-  try { offset = (await fsp.stat(partial)).size; } catch { offset = 0; }
-  const headers = { 'User-Agent': USER_AGENT };
-  if (offset > 0) headers.Range = `bytes=${offset}-`;
-  const response = await fetch(url, { signal, headers });
-  if (response.status === 416 && offset > 0) {
-    // 服务端认为这个区间已经结束（通常是上次刚好下完但没来得及改名）：丢掉重来
-    await fsp.rm(partial, { force: true });
-    return downloadSingleInner(url, destination, { signal, onProgress, expectedSize, sha1 });
-  }
-  if (!response.ok) {
-    await fsp.rm(partial, { force: true }).catch(() => {});
-    throw new Error(`下载失败 (${response.status})：${path.basename(destination)}`);
-  }
-  if (!response.body) throw new Error('下载响应为空');
-  const resumed = response.status === 206 && offset > 0;
-  if (!resumed) offset = 0;
-  const total = (Number(response.headers.get('content-length')) || 0) + offset || expectedSize;
-  let received = offset;
-  let lastNotice = 0;
-  const source = Readable.fromWeb(response.body);
-  source.on('data', (chunk) => {
-    received += chunk.length;
-    const now = Date.now();
-    if (now - lastNotice > 90 || received === total) {
-      onProgress?.(received, total);
-      lastNotice = now;
-    }
-  });
-  await pipeline(source, fs.createWriteStream(partial, { flags: resumed ? 'a' : 'w' }));
-  if (total && received !== total) throw new Error('文件未完整下载，请重试');
-  if (sha1) {
-    const actual = await sha1File(partial);
-    if (actual !== String(sha1).toLowerCase()) {
-      await fsp.rm(partial, { force: true }).catch(() => {});
-      throw new Error(`文件校验失败（SHA1 不匹配）：${path.basename(destination)}`);
-    }
-  }
-  await moveIntoPlace(partial, destination);
-  onProgress?.(received, total);
-  return { path: destination, size: received, skipped: false };
-}
-
-async function moveIntoPlace(partial, destination) {
-  try {
-    await fsp.rename(partial, destination);
-  } catch (error) {
-    // Windows 上目标已存在时 rename 会失败，覆盖一次再试
-    if (['EPERM', 'EACCES', 'EEXIST', 'ENOTEMPTY'].includes(error?.code)) {
-      await fsp.rm(destination, { force: true });
-      await fsp.rename(partial, destination);
-      return;
-    }
-    throw error;
-  }
-}
-
-// 支持 url 或 urls（数组依次尝试）：官方源失败自动切换 BMCLAPI 镜像
-async function downloadFile(urlOrUrls, destination, options = {}) {
-  const urls = Array.isArray(urlOrUrls) ? urlOrUrls : [urlOrUrls];
-  let lastError;
-  for (const url of urls) {
-    try {
-      return await downloadSingle(url, destination, options);
-    } catch (error) {
-      if (error.name === 'AbortError') throw error;
-      lastError = error;
-    }
-  }
-  throw lastError;
-}
-
+// 下载实现见 electron/lib/downloader.cjs（断点续传 + SHA1 校验 + 失败重试）
 async function downloadQueue(rawItems, taskId, concurrency = 6) {
   // 防御性去重：同一目标路径只下载一次
   const seen = new Set();
@@ -361,6 +247,7 @@ async function downloadQueue(rawItems, taskId, concurrency = 6) {
   let cursor = 0;
   let completed = 0;
   let failure = null;
+  const skipped = [];
   const controller = controllers.get(taskId);
   updateTask(taskId, { total: totalBytes, detail: `共 ${items.length} 个文件` });
 
@@ -388,6 +275,14 @@ async function downloadQueue(rawItems, taskId, concurrency = 6) {
         completed++;
         if (!totalBytes) updateTask(taskId, { progress: (completed / items.length) * 100 });
       } catch (error) {
+        if (error.name === 'AbortError') return;
+        // 可选文件（游戏资源）坏一个不该让整个安装失败：记下来继续
+        if (item.optional) {
+          skipped.push({ item, error });
+          progressByFile.set(index, item.size || 0);
+          completed++;
+          continue;
+        }
         if (!failure) {
           failure = error;
           failure.item = item;
@@ -398,6 +293,7 @@ async function downloadQueue(rawItems, taskId, concurrency = 6) {
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
   if (failure) throw failure;
+  return { total: items.length, completed, skipped };
 }
 
 function currentOs() {
@@ -866,15 +762,32 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null,
     }
     for (const [assetPath, object] of Object.entries(assetIndex.objects || {})) {
       const objectHash = object.hash;
+      const prefix = objectHash.slice(0, 2);
       pushDownload({
-        url: `https://resources.download.minecraft.net/${objectHash.slice(0, 2)}/${objectHash}`,
+        // 官方源 + BMCLAPI 资源镜像，任一可用即可
+        urls: [
+          `https://resources.download.minecraft.net/${prefix}/${objectHash}`,
+          `https://bmclapi2.bangbang93.com/assets/${prefix}/${objectHash}`,
+        ],
         size: object.size,
         sha1: objectHash,
-        destination: path.join(SHARED_ASSETS, 'objects', objectHash.slice(0, 2), objectHash),
+        destination: path.join(SHARED_ASSETS, 'objects', prefix, objectHash),
         label: `游戏资源 ${assetPath.split('/').pop() || objectHash.slice(0, 8)}`,
+        // 语言/音效这类资源坏个别文件不该让整个安装失败
+        optional: true,
       });
     }
-    await downloadQueue(downloads, taskId, 8);
+    const queueResult = await downloadQueue(downloads, taskId, 8);
+    if (queueResult?.skipped?.length) {
+      await appendErrorLog({
+        title: `安装 Minecraft ${version.id}${loader !== 'Vanilla' ? ` · ${loader}` : ''}（部分资源跳过）`,
+        error: new Error(`${queueResult.skipped.length} 个资源文件校验失败已跳过`),
+        extra: queueResult.skipped.slice(0, 5).reduce((acc, entry, i) => {
+          acc[`文件${i + 1}`] = `${path.basename(entry.item.destination)} · ${entry.error.message}`;
+          return acc;
+        }, {}),
+      });
+    }
     await fsp.mkdir(path.join(gameDir, 'mods'), { recursive: true });
     await fsp.mkdir(path.join(gameDir, 'shaderpacks'), { recursive: true });
     await fsp.mkdir(path.join(gameDir, 'saves'), { recursive: true });
@@ -894,7 +807,8 @@ async function installVersion(version, name, loader = 'Vanilla', forgeId = null,
       writeJsonAtomic(INSTANCES_FILE, instances),
       writeJsonAtomic(SETTINGS_FILE, settings),
     ]);
-    finishTask(taskId, 'completed', finishDetail || `安装完成 · ${downloads.length} 个文件`);
+    const skippedNote = queueResult?.skipped?.length ? `，${queueResult.skipped.length} 个资源已跳过` : '';
+    finishTask(taskId, 'completed', (finishDetail || `安装完成 · ${downloads.length} 个文件`) + skippedNote);
     send('instances:update', { instances, selectedInstanceId: id });
     return { instance, taskId };
   } catch (error) {
